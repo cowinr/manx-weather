@@ -4,13 +4,15 @@
  * Fetches the hourly Met Office forecast for Douglas from Open-Meteo
  * (ukmo_seamless, topped up from best_match where the Met Office run ends) and
  * tides and waves for Douglas Bay from the Open-Meteo marine API. It then paints
- * one static canvas (sky, stars, sun and moon paths, cloud, the island in three
- * paper layers, sea, the ruler) and animates rain, snow and lightning on a
- * second canvas above it. The x axis is time; the skyline is scenery.
+ * one scene canvas (sky, stars, sun and moon paths, cloud, the island in three
+ * paper layers, sea, the ruler), repainting only the visible stretch as the
+ * timeline scrolls, and animates rain, snow and lightning on a second canvas
+ * above it. The x axis is time; the skyline is scenery.
  *
  * Needs window.MANX_PROFILE from profile.js.
  * URL options: ?demo for a synthetic week that exercises every kind of weather,
- * ?hours=48 to open on the two-day view.
+ * ?hours=168, 48, 24 or 12 to open at that zoom (hours per screen), and ?debug
+ * to expose the astronomy helpers as window.EV.
  */
 (() => {
 'use strict';

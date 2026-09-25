@@ -3,14 +3,16 @@
   Ellan Vannin: the week's weather as a paper-cut panorama of the Isle of Man.
 
   The island's real skyline (profile.js, built by tools/build_profile.py) runs
-  across the page, but the horizontal axis is time: now at the left, seven days
-  ahead at the right. Every column is lit and weathered for its own hour, from
-  the Met Office forecast served by Open-Meteo, with tides and waves from the
-  Open-Meteo marine API. Drawing and data live in app.js.
+  across the page, but the horizontal axis is time: now at the left edge, and
+  about seven days ahead reached by scrolling right. Every column is lit and
+  weathered for its own hour, from the Met Office forecast served by
+  Open-Meteo, with tides and waves from the Open-Meteo marine API. Drawing and
+  data live in app.js.
 
   Serve over http (python3 -m http.server) and open index.html.
   Query options: ?demo (a synthetic week that exercises every kind of weather),
-  ?hours=48 (open on the two-day view).
+  ?hours=168, 48, 24 or 12 (open at that zoom, in hours per screen),
+  ?debug (expose the astronomy helpers as window.EV).
 -->
 <html lang="en-GB">
 <head>

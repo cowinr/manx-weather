@@ -1,6 +1,6 @@
 # Ellan Vannin weather
 
-The week's weather for the Isle of Man, drawn as a paper-cut panorama of the island. Time runs left to right: now at the left edge, seven days ahead at the right (or 48 hours in the close-up view). Each column of the scene is lit and weathered for its own hour.
+The week's weather for the Isle of Man, drawn as a paper-cut panorama of the island. Time runs left to right, from now at the left edge to about seven days ahead, and you scroll right to move into the future. Each column of the scene is lit and weathered for its own hour.
 
 The skyline is the island's real profile seen from the sea off Douglas, from the Calf of Man on the left to the Point of Ayre on the right. It is scenery. A column shows a moment in time, not a place, and the forecast is for a single point at Douglas.
 
