@@ -6,10 +6,11 @@
  * tides and waves for Douglas Bay from the Open-Meteo marine API. It then paints
  * one scene canvas (sky, stars, sun and moon paths, cloud, the island in three
  * paper layers, sea, the ruler), repainting only the visible stretch as the
- * timeline scrolls, and animates rain, snow and lightning on a second canvas
- * above it. The x axis is time; the skyline is scenery.
+ * timeline scrolls, and animates rain, snow, lightning, sea creatures and gulls
+ * on a second canvas above it. The x axis is time; the skyline is scenery. The
+ * highlighted hour's numbers go to the panel beside the scene (panel.js).
  *
- * Needs window.MANX_PROFILE from profile.js.
+ * Needs window.MANX_PROFILE from profile.js and window.HourPanel from panel.js.
  * URL options: ?demo for a synthetic week that exercises every kind of weather,
  * ?hours=168, 48, 24 or 12 to open at that zoom (hours per screen), and ?debug
  * to expose the astronomy helpers as window.EV.
@@ -770,7 +771,7 @@ const GRAIN = (() => {
   return cv;
 })();
 // the paper grain sits over the frame as one CSS layer, so it costs nothing while scrolling
-$('grain').style.backgroundImage = `url(${GRAIN.toDataURL()})`;
+for (const id of ['grain', 'panel-grain']) $(id).style.backgroundImage = `url(${GRAIN.toDataURL()})`;
 
 /* ---------- the ruler ---------- */
 function hourMarks() {
@@ -1142,59 +1143,23 @@ function paintGulls(c, now) {
   }
 }
 let raf = 0;
-if (params.has('debug')) window.EV = { paperMoon, moonDisc, sunAlt, moonAlt, G, paint: () => paintScene(), spawn: (kind) => spawnCreature(performance.now(), kind), creatures: () => state.creatures };
+if (params.has('debug')) window.EV = { paperMoon, moonDisc, sunAlt, moonAlt, G, paint: () => paintScene(), spawn: (kind) => spawnCreature(performance.now(), kind), creatures: () => state.creatures, harbourSeal: HourPanel.seal };
 function loop(now) { paintFx(now); raf = requestAnimationFrame(loop); }
 
-/* ---------- the tide staff ---------- */
-const fmtM = (m) => `${m > .05 ? '+' : m < -.05 ? '\u2212' : ''}${Math.abs(m).toFixed(1)}`;
-function buildStaff() {
-  const staff = $('staff');
-  let lo = Infinity, hi = -Infinity;
-  for (let i = 0; i <= G.hours; i++) { const v = DATA.tide[idxOf(G.t0 + i * HOUR)]; if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }
-  if (!DATA.hasSea || !Number.isFinite(lo)) { staff.hidden = true; G.staff = null; return; }
-  const top = Math.ceil(hi + .05), bot = Math.floor(lo - .05), pad = 7, h = (top - bot) * G.tPx + pad * 2;
-  G.staff = { top, bot, pad, y0: tideAt(top) - pad, h };
-  const every = G.tPx >= 11 ? 1 : 2;
-  let marks = '';
-  for (let m = bot; m <= top + 1e-6; m += .5) {
-    const y = pad + (top - m) * G.tPx, whole = Math.abs(m - Math.round(m)) < 1e-6;
-    marks += `<line x1="0" x2="${whole ? 9 : 5}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/>`;
-    if (whole && (Math.round(m) % every === 0 || m === 0)) marks += `<text x="11" y="${(y + 3.5).toFixed(1)}">${m === 0 ? '0' : fmtM(m).replace('.0', '')}</text>`;
-  }
-  staff.style.top = `${G.staff.y0}px`; staff.style.height = `${h}px`;
-  staff.querySelector('svg').setAttribute('viewBox', `0 0 30 ${h.toFixed(1)}`);
-  staff.querySelector('svg').setAttribute('height', h.toFixed(1));
-  staff.querySelector('.marks').innerHTML = marks;
-}
-function placeStaff(x, j) {
-  const staff = $('staff');
-  if (!G.staff) return;
-  const v = DATA.tide[j];
-  staff.hidden = !Number.isFinite(v);
-  if (staff.hidden) return;
-  const flip = x > G.V - 90, level = tideAt(v) - G.staff.y0;
-  staff.style.left = `${flip ? x - 33 : x + 3}px`;
-  staff.classList.toggle('flip', flip);
-  staff.style.setProperty('--level', `${clamp(level, 0, G.staff.h).toFixed(1)}px`);
-  $('staff-level').textContent = `${fmtM(v)} m`;
-}
-
-/* ---------- the hanging tag ---------- */
-function tideNote(i) {
-  if (!DATA.hasSea) return '';
-  const T = DATA.tide, j0 = idxOf(G.t0 + i * HOUR);
-  if (!Number.isFinite(T[j0]) || !Number.isFinite(T[j0 + 1])) return '';
-  const rising = T[j0 + 1] > T[j0];
-  for (let j = j0 + 1; j < DATA.n - 1; j++) {
-    const a = T[j - 1], b = T[j], cc = T[j + 1];
+/* ---------- the hour panel ---------- */
+// the next high or low water after index j, placed between the hours and rounded to the quarter hour
+function tideTurn(j) {
+  const T = DATA.tide;
+  if (!DATA.hasSea || !Number.isFinite(T[j]) || !Number.isFinite(T[j + 1])) return null;
+  for (let k = j + 1; k < DATA.n - 1; k++) {
+    const a = T[k - 1], b = T[k], cc = T[k + 1];
     if (![a, b, cc].every(Number.isFinite)) break;
     if ((b >= a && b > cc) || (b <= a && b < cc)) {
       const den = a - 2 * b + cc, off = den ? .5 * (a - cc) / den : 0;
-      const when = Math.round((DATA.t[j] + off * HOUR) / 9e5) * 9e5;
-      return `tide ${fmtM(T[j0])} m ${rising ? 'rising' : 'falling'}, ${b > a ? 'high' : 'low'} water around ${fmtTime.format(when)}`;
+      return { high: b > a, when: fmtTime.format(Math.round((DATA.t[k] + off * HOUR) / 9e5) * 9e5) };
     }
   }
-  return `tide ${fmtM(T[j0])} m, ${rising ? 'rising' : 'falling'}`;
+  return null;
 }
 function describe(w, L) {
   const e = CODES[Math.round(w.code)] || ['Unsettled'];
@@ -1202,6 +1167,21 @@ function describe(w, L) {
   if (fogK(w) > .5 && w.code < 45) s += ', hill fog';
   if (w.wind >= 19) s += `, ${beaufort(w.wind)}`;
   return s;
+}
+// everything panel.js draws for one hour; rain is for the hour ending at the next mark, as the ruler shows it
+function hourDetail(i, t, j, l, w) {
+  const T = DATA.tide, jn = Math.min(DATA.n - 1, j + 1);
+  if (!DATA.tideRange) { const f = T.filter(Number.isFinite); DATA.tideRange = f.length ? [Math.min(...f), Math.max(...f)] : [-3, 3]; }
+  const p = Object.fromEntries(fmtParts.formatToParts(t).map((o) => [o.type, o.value]));
+  return {
+    t, now: i === 0, weekday: p.weekday, day: p.day, month: p.month, hour: p.hour,
+    what: describe({ ...w, temp: DATA.temp[j], dew: DATA.dew[j], code: DATA.code[j], wind: DATA.wind[j] }, l.L),
+    light: l.L, sun: sunAlt(t), cloud: DATA.cloud[j],
+    temp: DATA.temp[j], feel: DATA.feel[j],
+    wind: DATA.wind[j], gust: DATA.gust[j], dir: DATA.dir[j], compass: compass(DATA.dir[j]),
+    precip: DATA.precip[jn], snow: DATA.snow[jn], prob: DATA.prob[jn],
+    wave: DATA.wave[j], tide: T[j], rising: T[j + 1] > T[j], next: tideTurn(j), tideLo: DATA.tideRange[0], tideHi: DATA.tideRange[1]
+  };
 }
 function setCursor(i, scroll) {
   if (!DATA) return;
@@ -1211,34 +1191,14 @@ function setCursor(i, scroll) {
   if (scroll && (cx < G.sx + 40 || cx > G.sx + G.V - 40)) {
     stage.scrollTo({ left: clamp(cx - G.V / 2, 0, Math.max(0, G.W - G.V)), behavior: reduce ? 'auto' : 'smooth' });
   }
-  // the thread and tag live in screen space; they hide while their hour is scrolled out of view
-  const x = cx - G.sx, off = x < -1 || x > G.V + 1;
-  const thread = $('thread'), tag = $('tag'), col = $('col');
-  thread.hidden = tag.hidden = col.hidden = off;
-  if (off) { $('staff').hidden = true; return; }
-  thread.style.left = `${x}px`; thread.style.height = `${G.Hs}px`;
-  Object.assign(col.style, { left: `${x}px`, top: `${G.Hs + 4}px`, width: `${Math.max(2, G.colW)}px`, height: `${G.R - 4}px` });
-  const p = Object.fromEntries(fmtParts.formatToParts(t).map((o) => [o.type, o.value]));
-  $('t-when').textContent = `${i === 0 ? 'Now · ' : ''}${p.weekday} ${p.day} ${p.month} · ${p.hour}:00`;
-  $('t-what').textContent = describe({ ...w, temp: DATA.temp[j], dew: DATA.dew[j], code: DATA.code[j], wind: DATA.wind[j] }, l.L);
-  $('t-temp').textContent = String(Math.round(DATA.temp[j]));
-  const feel = Math.round(DATA.feel[j]);
-  $('t-feel').textContent = Math.abs(feel - DATA.temp[j]) >= 1.5 ? `feels ${feel}°` : '';
-  const gust = DATA.gust[j], sp = DATA.wind[j];
-  $('t-wind').textContent = `${compass(DATA.dir[j])} ${Math.round(sp)} mph${gust - sp >= 8 ? `, gusts ${Math.round(gust)}` : ''}`;
-  const jn = Math.min(DATA.n - 1, j + 1), pr = DATA.precip[jn], snow = DATA.snow[jn], prob = Math.round(DATA.prob[jn]);
-  $('t-rain').textContent = snow > .02 ? `${snow.toFixed(1)} cm of snow, ${prob}%` : pr >= .05 ? `${pr.toFixed(1)} mm in the hour, ${prob}%` : `dry, ${prob}% chance`;
-  const lcl = 125 * Math.max(0, DATA.temp[j] - DATA.dew[j]), vis = DATA.vis[j];
-  let cloud = `${Math.round(DATA.cloud[j])}%`;
-  if (DATA.low[j] > 50) cloud += `, base about ${Math.max(50, Math.round(lcl / 50) * 50)} m`;
-  if (vis < 5000) cloud += `, visibility ${vis < 1000 ? `${Math.round(vis / 50) * 50} m` : `${(vis / 1000).toFixed(1)} km`}`;
-  $('t-cloud').textContent = cloud;
-  const wave = DATA.wave[j];
-  $('t-sea').textContent = [Number.isFinite(wave) ? `waves ${wave.toFixed(1)} m` : '', tideNote(i)].filter(Boolean).join(', ') || 'no sea data';
-  placeStaff(x, j);
-  const tw = tag.offsetWidth || 236, left = clamp(x - tw / 2, 6, G.V - tw - 6);
-  tag.style.left = `${left}px`;
-  tag.style.transform = `rotate(${clamp((x - (left + tw / 2)) / tw * 10, -5, 5) - .6}deg)`;
+  // the thread lives in screen space and hides while its hour is scrolled out of view; the panel keeps the hour
+  const x = cx - G.sx, off = x < -1 || x > G.V + 1, thread = $('thread'), col = $('col');
+  thread.hidden = col.hidden = off;
+  if (!off) {
+    thread.style.left = `${x}px`; thread.style.height = `${G.Hs}px`;
+    Object.assign(col.style, { left: `${x}px`, top: `${G.Hs + 4}px`, width: `${Math.max(2, G.colW)}px`, height: `${G.R - 4}px` });
+  }
+  HourPanel.show(hourDetail(i, t, j, l, w));
 }
 
 /* ---------- words for screen readers ---------- */
@@ -1264,7 +1224,7 @@ function render(keepTime) {
   const tLeft = keepTime ?? (G.pxh ? tOf(stage.scrollLeft) : null);
   layout(); buildLook(); buildSlots(); buildScenery();
   G.hm = hourMarks(); G.segs = daySegments(G.hm);
-  buildFx(); buildStaff();
+  buildFx();
   stage.scrollLeft = tLeft == null ? 0 : clamp(xOf(tLeft), 0, Math.max(0, G.W - G.V));
   paintScene();
   cancelAnimationFrame(raf);

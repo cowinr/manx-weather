@@ -7,7 +7,8 @@
   about seven days ahead reached by scrolling right. Every column is lit and
   weathered for its own hour, from the Met Office forecast served by
   Open-Meteo, with tides and waves from the Open-Meteo marine API. Drawing and
-  data live in app.js.
+  data live in app.js; the panel for the highlighted hour, a paper-cut harbour
+  with a wind dial, thermometer, rain gauge and tide staff, lives in panel.js.
 
   Serve over http (python3 -m http.server) and open index.html.
   Query options: ?demo (a synthetic week that exercises every kind of weather),
@@ -37,6 +38,9 @@
   --manx:#c8102e;
   --thread:rgba(42,36,28,.62);
   --shade:rgba(20,14,6,.42);
+  --glass:rgba(255,255,255,.62);
+  --bezel:#b68a55;
+  --water:#5b8fb6;
   --display:"IM Fell English",Georgia,serif;
   --caps:"IM Fell English SC",Georgia,serif;
   --text:"Newsreader",Georgia,serif;
@@ -54,6 +58,9 @@
     --ink-faint:rgba(238,229,210,.14);
     --thread:rgba(238,229,210,.55);
     --shade:rgba(0,0,0,.6);
+    --glass:rgba(238,229,210,.16);
+    --bezel:#8a6a42;
+    --water:#4c7fa6;
   }
 }
 :root[data-theme="dark"]{
@@ -67,6 +74,9 @@
   --ink-faint:rgba(238,229,210,.14);
   --thread:rgba(238,229,210,.55);
   --shade:rgba(0,0,0,.6);
+  --glass:rgba(238,229,210,.16);
+  --bezel:#8a6a42;
+  --water:#4c7fa6;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
@@ -130,39 +140,74 @@ h1{margin:0;font:italic 400 clamp(28px,3.4vw,40px)/1 var(--display);letter-spaci
   box-shadow:1px 0 0 rgba(255,255,255,.18)}
 .thread::after{content:"";position:absolute;left:-5px;bottom:-5px;width:9px;height:9px;border-radius:50%;
   background:var(--manx);box-shadow:0 1px 2px rgba(0,0,0,.4)}
-.staff{position:absolute;width:30px;pointer-events:none;--level:50%;
-  background:linear-gradient(180deg,var(--tag) 0,var(--tag) var(--level),rgba(120,170,200,.55) var(--level),rgba(40,90,130,.62) 100%);
-  box-shadow:0 2px 5px rgba(0,0,0,.35),inset 0 0 0 1px rgba(0,0,0,.18);border-radius:2px}
-.staff svg{display:block}
-.staff line{stroke:var(--ink);stroke-width:1.1}
-.staff text{font:600 10px "Newsreader",Georgia,serif;fill:var(--ink)}
-.staff .level{position:absolute;left:34px;top:var(--level);transform:translateY(-50%);white-space:nowrap;
-  font:600 11px/1 var(--text);font-variant-numeric:tabular-nums;color:#fff;background:#c8102e;padding:3px 6px 3px 5px;border-radius:2px;
-  box-shadow:0 1px 3px rgba(0,0,0,.35)}
-.staff .level::before{content:"";position:absolute;right:100%;top:50%;margin-top:-4px;border:4px solid transparent;border-right-color:#c8102e}
-.staff.flip .level{left:auto;right:34px}
-.staff.flip .level::before{right:auto;left:100%;border-right-color:transparent;border-left-color:#c8102e}
 .col{position:absolute;pointer-events:none;background:rgba(200,16,46,.12);border-left:1px solid rgba(200,16,46,.35);border-right:1px solid rgba(200,16,46,.35)}
 
-.tag{
-  position:absolute;top:22px;width:236px;padding:22px 16px 13px;pointer-events:none;
-  background:var(--grain),var(--tag);color:var(--ink);
-  clip-path:polygon(14% 0,86% 0,100% 9%,100% 100%,0 100%,0 9%);
-  filter:drop-shadow(0 8px 10px rgba(0,0,0,.28));
-  transform-origin:50% 0;transition:transform .35s cubic-bezier(.3,1.6,.5,1);
-}
-.tag::before{content:"";position:absolute;left:50%;top:8px;width:9px;height:9px;margin-left:-4.5px;border-radius:50%;
-  background:var(--page);box-shadow:inset 0 1px 2px rgba(0,0,0,.6),0 0 0 2px rgba(200,160,90,.55)}
-.tag .when{font:400 11.5px/1.2 var(--caps);letter-spacing:.14em;color:var(--ink-soft);text-align:center}
-.tag .what{margin:6px 0 8px;font:italic 400 18px/1.15 var(--display);text-align:center}
-.tag .temp{display:flex;align-items:baseline;justify-content:center;gap:8px;margin-bottom:9px}
-.tag .temp b{font:300 42px/1 var(--text);font-variation-settings:"opsz" 72;font-variant-numeric:lining-nums;letter-spacing:-.01em}
-.tag .temp sup{font-size:.55em;vertical-align:.55em;margin-left:1px}
-.tag .temp > span{font:italic 400 13px/1 var(--text);color:var(--ink-soft)}
-.tag dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font:400 13px/1.3 var(--text);font-variant-numeric:tabular-nums;
-  border-top:1px dashed var(--ink-faint);padding-top:8px}
-.tag dt{font:400 11px/1.55 var(--caps);letter-spacing:.12em;color:var(--ink-soft)}
-.tag dd{margin:0}
+/* the hour panel: a paper-cut harbour drawn by panel.js, beside the scene or, on phones, under it */
+.frame{grid-template-columns:minmax(0,1fr) clamp(240px,22vw,310px);grid-template-areas:"head head" "stage panel" "foot foot"}
+.frame > header{grid-area:head}
+.frame > .stage-wrap{grid-area:stage}
+.frame > footer{grid-area:foot}
+.panel{grid-area:panel;position:relative;min-height:0;overflow:hidden;border-radius:14px;background:#0b1026;
+  box-shadow:0 0 0 1px rgba(0,0,0,.35),0 1px 0 rgba(255,255,255,.4)}
+.harbour{position:absolute;inset:0;width:100%;height:100%;display:block}
+.banner{position:absolute;left:12px;right:12px;top:12px;z-index:1;text-align:center;padding:8px 18px 9px;color:var(--ink);
+  background:var(--grain),var(--tag);filter:drop-shadow(0 4px 6px rgba(0,0,0,.3));
+  clip-path:polygon(0 0,100% 0,95% 50%,100% 100%,0 100%,5% 50%)}
+.banner .p-when{display:block;font:400 11.5px/1.2 var(--caps);letter-spacing:.14em;color:var(--ink-soft)}
+.banner .p-what{display:block;font:italic 400 19px/1.15 var(--display);margin-top:3px}
+.harbour text{font-family:var(--text);fill:var(--ink)}
+.harbour .lbl,.harbour .board{fill:var(--tag)}
+.harbour .lbig{font:300 25px var(--text);font-variant-numeric:lining-nums tabular-nums}
+.harbour .lbig.small{font-size:18px}
+.harbour .lunit{font:400 11px var(--text);fill:var(--ink-soft)}
+.harbour .lsmall{font:italic 400 11px var(--text);fill:var(--ink-soft)}
+.harbour .lsmall.small{font-size:9.5px}
+.harbour .nail{fill:#6d604d}
+.harbour .iron{stroke-width:2;stroke-linecap:round}
+.harbour .course{stroke:rgba(0,0,0,.28);stroke-width:1}
+.harbour .joint{stroke:rgba(0,0,0,.22);stroke-width:1}
+.harbour .staffboard{fill:#f4efe4}
+.harbour .stafftick{stroke:#2a241c;stroke-width:1}
+.harbour .stafftext{font:600 8.5px var(--text);fill:#2a241c}
+.harbour .rainline{stroke:rgba(214,226,238,.75);stroke-width:1.1;stroke-linecap:round}
+.harbour .snowdot{fill:#fff;opacity:.9}
+.harbour .star{fill:#fff8e0}
+.harbour .foam{stroke:rgba(255,255,255,.8);stroke-width:1.4;fill:none;stroke-linecap:round}
+.harbour .ripple{fill:none;stroke:#fff;stroke-width:.8}
+.inst{overflow:visible}
+.inst .scale{font-size:8.5px;fill:var(--ink-soft);font-variant-numeric:tabular-nums}
+.inst .bezeltext{font:400 9.5px var(--caps);fill:#fbf3df}
+.inst .ringtext{font:600 7.5px var(--text);fill:var(--ink-soft);paint-order:stroke;stroke:var(--tag);stroke-width:2.4px}
+.inst .glass{fill:var(--glass);stroke:var(--ink);stroke-width:1.1}
+.inst .merc{fill:#c8102e}
+.inst .shine{stroke:rgba(255,255,255,.75);stroke-width:1.4;stroke-linecap:round}
+.inst .tick{stroke:var(--ink);stroke-width:.9}
+.inst .feel{fill:var(--ink-soft)}
+.inst .finial{fill:var(--ink)}
+.inst .sockA{fill:#c8102e}
+.inst .sockB{fill:#f3e6c8}
+.inst .mouth{fill:#4a0914}
+.inst .bezel{fill:var(--bezel)}
+.inst .face{fill:var(--tag);stroke:rgba(0,0,0,.25);stroke-width:1}
+.inst .ring{fill:none;stroke:var(--ink);stroke-opacity:.28;stroke-width:.8;stroke-dasharray:1.5 2.5}
+.inst .from{fill:#c8102e}
+.inst .ghost{fill:none;stroke:#c8102e;stroke-width:1;stroke-dasharray:3 2;stroke-opacity:.75}
+.inst .drop{fill:#4f86b0}
+.inst .flake{fill:#fff;stroke:#9fb2c0;stroke-width:.6}
+.inst .water{fill:var(--water)}
+.inst .snowfill{fill:#fbfaf6}
+.harbour .arrow{fill:#c8102e}
+.harbour .g-body{fill:#fbfaf6}
+.harbour .g-wing{fill:#9aa7b1}
+.harbour .g-tip{fill:#1d1d1d}
+.harbour .g-bill{fill:#f2c230}
+.harbour .g-spot{fill:#d42d1f}
+.harbour .g-eye{fill:#222}
+.harbour .g-leg{stroke:#e2a49a;stroke-width:1.6;fill:none}
+.harbour .seal-body{fill:#86827b}
+.harbour .seal-spot{fill:#5e5a55}
+.harbour .seal-dark{fill:#15130f}
+.harbour .seal-whisker{stroke:rgba(255,255,255,.7);stroke-width:.35;fill:none}
 
 .note{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%) rotate(-1.5deg);padding:16px 22px;
   background:var(--grain),var(--tag);color:var(--ink);font:italic 400 17px/1.3 var(--display);
@@ -175,19 +220,15 @@ footer a{color:inherit}
 
 @media (max-width:720px){
   body{padding:8px}
-  .frame{padding:12px 12px 10px;border-radius:18px;height:calc(100dvh - 16px);grid-template-rows:auto minmax(380px,1fr) auto}
+  .frame{padding:12px 12px 10px;border-radius:18px;height:calc(100dvh - 16px)}
   .stamp{width:40px;height:40px}
   .sub{font-size:11.5px;letter-spacing:.1em}
   .status{text-align:left;max-width:none;flex-basis:100%}
-  .tag{width:164px;padding:18px 10px 9px;top:12px}
-  .tag .when{font-size:10px;letter-spacing:.08em}
-  .tag .what{font-size:14px;margin:4px 0 5px}
-  .tag .temp{margin-bottom:5px}
-  .tag .temp b{font-size:28px}
-  .tag dl{font-size:11px;gap:2px 7px;padding-top:5px}
-  .tag dt{font-size:9.5px}
+  .frame{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "stage" "panel" "foot";grid-template-rows:auto minmax(280px,1fr) 176px auto}
+  .banner{left:8px;right:8px;top:6px;padding:5px 18px 6px;display:flex;justify-content:center;align-items:baseline;gap:4px 8px;flex-wrap:wrap}
+  .banner .p-when{font-size:10px;letter-spacing:.1em}
+  .banner .p-what{font-size:15px;margin:0}
 }
-@media (prefers-reduced-motion:reduce){.tag{transition:none}}
 </style>
 </head>
 <body>
@@ -232,21 +273,6 @@ footer a{color:inherit}
         <div class="grain" id="grain"></div>
         <div class="col" id="col" hidden></div>
         <div class="thread" id="thread" hidden></div>
-        <div class="staff" id="staff" hidden aria-hidden="true">
-          <svg width="30" viewBox="0 0 30 100"><g class="marks"></g></svg>
-          <span class="level" id="staff-level"></span>
-        </div>
-        <div class="tag" id="tag" hidden aria-live="off">
-          <div class="when" id="t-when"></div>
-          <div class="what" id="t-what"></div>
-          <div class="temp"><b><span id="t-temp"></span><sup>&deg;</sup></b><span id="t-feel"></span></div>
-          <dl>
-            <dt>Wind</dt><dd id="t-wind"></dd>
-            <dt>Rain</dt><dd id="t-rain"></dd>
-            <dt>Cloud</dt><dd id="t-cloud"></dd>
-            <dt>Sea</dt><dd id="t-sea"></dd>
-          </dl>
-        </div>
        </div>
       </div>
     </div>
@@ -256,6 +282,13 @@ footer a{color:inherit}
     <div class="note" id="note" hidden></div>
   </div>
 
+  <aside class="panel" id="panel" aria-label="The highlighted hour">
+    <svg class="harbour" id="harbour" aria-hidden="true"></svg>
+    <div class="grain" id="panel-grain"></div>
+    <div class="banner" id="banner"><span class="p-when" id="p-when"></span> <span class="p-what" id="p-what"></span></div>
+    <p class="sr" id="p-said"></p>
+  </aside>
+
   <footer>
     <span><i>The skyline is scenery.</i> It runs from the Calf of Man on the left to the Point of Ayre on the right, but each column is an hour, not a place. The forecast is for Douglas.</span>
     <span id="credit">Forecast: Met Office via <a href="https://open-meteo.com/">Open-Meteo</a> (CC BY 4.0) &middot; skyline: SRTM 30 m via AWS Terrain Tiles</span>
@@ -264,6 +297,7 @@ footer a{color:inherit}
 <ol class="sr" id="summary" aria-label="Day by day"></ol>
 
 <script src="profile.js"></script>
+<script src="panel.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
