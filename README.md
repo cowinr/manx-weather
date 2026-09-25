@@ -19,6 +19,8 @@ The skyline is the island's real profile seen from the sea off Douglas, from the
 | Lit windows on Douglas promenade | Darkness at that hour |
 | Lighthouses: Chicken Rock, Thousla Rock, Langness, Douglas Head, Maughold Head, Point of Ayre | The six Northern Lighthouse Board lights, in their real daymarks. After dark each flashes its real character, such as Maughold Head's three white flashes every 30 seconds or Thousla Rock's red flash every 3; fog spreads the glow |
 
+Now and then a grey seal puts its head up, a pod of dolphins leaps or a minke whale blows and rolls, and a few herring gulls wheel over the bay. They are decoration, not forecast, and they keep out of the dark hours.
+
 The ruler underneath gives the same hours as numbers: temperature, rain per hour (bar opacity is the chance of rain) and wind speed and direction.
 
 The whole forecast, about seven days, is always there: scroll right (trackpad, mouse wheel, swipe, Page Down, or the "later" tab) to move into the future, and Now to come back. The Week, 48 h, 24 h and 12 h buttons are zoom levels that set how many hours fit on one screen; zooming keeps the hour under the pointer where it was. The island stays fixed in the frame while time slides past it, and each column of the island is lit for whichever hour is passing over it. Only the visible stretch is drawn, so even the 12-hour zoom, about 19,000 px of timeline, repaints in a few milliseconds. In the closer zooms the ruler labels every hour and prints the rain amount on each bar.

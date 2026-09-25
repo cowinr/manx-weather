@@ -725,15 +725,19 @@ function paintTower(c) {
   noShadow(c);
   paintLighthouses(c, true);
 }
+// the sea is four strips, far to near; creatures surface through them, so they share the wave shape
+const SEA = [0, .22, .48, .76];
+const seaLam = (j) => (24 + j * 15) * G.sc;
+const seaAmp = (l, j) => (.7 + clamp(Number.isFinite(l.w.wave) ? l.w.wave : .4, .1, 6) * 1.25) * (.5 + j * .5) * G.sc;
+// strips close up towards low water, so the sea never runs out of depth
+const seaTop = (l, j) => { const y = tideY(l); return y + SEA[j] * (G.Hs - y); };
+const waveY = (x, j, l = lookX(x)) => seaTop(l, j) + seaAmp(l, j) * Math.sin(x / seaLam(j) * TAU + j * 1.9);
 function paintSea(c) {
-  const offs = [0, .22, .48, .76];
-  offs.forEach((o, j) => {
-    const lam = (24 + j * 15) * G.sc, ph = j * 1.9, ampK = (.5 + j * .5) * G.sc;
-    const amp = (l) => (.7 + clamp(Number.isFinite(l.w.wave) ? l.w.wave : .4, .1, 6) * 1.25) * ampK;
+  SEA.forEach((_, j) => {
+    const lam = seaLam(j), ph = j * 1.9;
+    const amp = (l) => seaAmp(l, j), top = (l) => seaTop(l, j);
     c.beginPath(); c.moveTo(G.x0 - 6, G.Hs + 6);
-    // strips close up towards low water, so the sea never runs out of depth
-    const top = (l) => { const y = tideY(l); return y + o * (G.Hs - y); };
-    for (let x = Math.floor((G.x0 - 6) / 3) * 3; x <= G.x1 + 6; x += 3) { const l = lookX(x); c.lineTo(x, top(l) + amp(l) * Math.sin(x / lam * TAU + ph)); }
+    for (let x = Math.floor((G.x0 - 6) / 3) * 3; x <= G.x1 + 6; x += 3) c.lineTo(x, waveY(x, j));
     c.lineTo(G.x1 + 6, G.Hs + 6); c.closePath();
     shadow(c, 6, -1.5, .3); c.fillStyle = hGrad(c, (l) => rgba(mix(l.sea, C.black, j * .09))); c.fill(); noShadow(c);
     for (let n = Math.floor(G.x0 / lam) - 1; ; n++) {
@@ -892,7 +896,7 @@ function paintRuler(c, hm, segs) {
 /* ---------- rain, snow, lightning ---------- */
 function buildFx() {
   const R = mulberry(61);
-  state.fxCols = []; state.storms = [];
+  state.fxCols = []; state.storms = []; state.creatures = []; state.gulls = buildGulls();
   for (let i = 0; i < G.hours; i++) {
     const t = G.t0 + (i + .5) * HOUR, l = lookT(t), w = l.w, x0 = xOf(G.t0 + i * HOUR);
     const top = w.low > 30 ? lowBaseY(w) - 4 : G.Hs * .3, bottom = tideY(l) + 8;
@@ -950,6 +954,7 @@ function paintFx(now) {
       s.bolt.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.stroke(); c.restore();
     }
   }
+  if (!reduce) paintCreatures(c, now);
   c.restore();
   for (const lp of G.lamps) {
     if (!lp.on) continue;
@@ -965,6 +970,7 @@ function paintFx(now) {
       c.fillStyle = g; c.fillRect(-r, -r, r * 2, r * 2); c.restore();
     }
   }
+  if (!reduce) paintGulls(c, now);
 }
 function flashLevel(t, group, period) {
   const u = ((t % period) + period) % period;
@@ -977,8 +983,166 @@ function glow(c, x, y, r, col, a) {
   g.addColorStop(0, rgba(col, a)); g.addColorStop(1, rgba(col, 0));
   c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2);
 }
+/* ---------- seals, dolphins, whales and gulls ---------- */
+// every so often something surfaces in the stretch of sea on screen; like the lightning, this is animation, not forecast
+const KINDS = [['seal', 5, 4600], ['dolphins', 4, 2400], ['whale', 1.6, 6200]];
+const DUSK = [16, 22, 36];
+const tint = (col, l, k = .75) => rgba(mix(col, DUSK, clamp(1 - l.L, 0, 1) * k));
+function spawnCreature(now, only) {
+  state.nextCreature = now + 5000 + Math.random() * 9000;
+  const x = G.sx + 50 + Math.random() * Math.max(10, G.V - 100), l = lookX(x);
+  if (!DATA.hasSea || !Number.isFinite(l.w.tide) || (l.L < .12 && !only)) { state.nextCreature = now + 2500; return; }
+  let r = Math.random() * KINDS.reduce((a, k) => a + k[1], 0), kind = KINDS.find((k) => k[0] === only) || KINDS[0];
+  if (!only) for (const k of KINDS) { r -= k[1]; if (r <= 0) { kind = k; break; } }
+  const j = kind[0] === 'whale' ? 1 : kind[0] === 'dolphins' ? 2 + Math.floor(Math.random() * 2) : 1 + Math.floor(Math.random() * 3);
+  const s = G.sc * [1, 1.25, 1.55, 1.85][j], dir = Math.random() < .5 ? -1 : 1;
+  const pod = kind[0] === 'dolphins' ? 1 + Math.floor(Math.random() * 3) : 1;
+  for (let k = 0; k < pod; k++) state.creatures.push({ kind: kind[0], x: x - dir * k * 22 * s, j, s, dir, t0: now + k * 230, dur: kind[2] });
+}
+function clipAbove(c, xa, xb, j) {
+  c.beginPath(); c.moveTo(xa, -20); c.lineTo(xb, -20);
+  for (let x = xb; x >= xa; x -= 2) c.lineTo(x, waveY(x, j));
+  c.closePath(); c.clip();
+}
+function spray(c, x, y, s, age, l) {
+  if (age < 0 || age > .7) return;
+  c.fillStyle = `rgba(250,252,255,${((1 - age / .7) * (.4 + .5 * l.L)).toFixed(3)})`;
+  for (let k = 0; k < 7; k++) {
+    const vx = (k - 3) * 9, vy = 26 + (k % 3) * 9;
+    c.beginPath(); c.arc(x + vx * age * s, y - (vy * age - 60 * age * age) * s, (1 + (k % 2) * .5) * s, 0, TAU); c.fill();
+  }
+}
+function paintCreatures(c, now) {
+  if (!state.nextCreature) state.nextCreature = now + 2500;
+  if (now > state.nextCreature) spawnCreature(now);
+  state.creatures = state.creatures.filter((k) => now < k.t0 + k.dur);
+  for (const k of state.creatures) {
+    const age = (now - k.t0) / 1000;
+    if (age < 0 || k.x < G.sx - 120 || k.x > G.sx + G.V + 120) continue;
+    const l = lookX(k.x), yw = waveY(k.x, k.j, l);
+    c.save(); clipAbove(c, k.x - 110 * k.s, k.x + 110 * k.s, k.j);
+    shadow(c, 2.5, 1, .28);
+    if (k.kind === 'seal') paintSeal(c, k, age, yw, l);
+    else if (k.kind === 'dolphins') paintDolphin(c, k, age, yw, l);
+    else paintWhale(c, k, age, yw, l);
+    c.restore();
+    if (k.kind === 'dolphins') { spray(c, k.x - k.dir * 26 * k.s, yw, k.s, age - .2, l); spray(c, k.x + k.dir * 26 * k.s, yw, k.s, age - 1.95, l); }
+    if (k.kind === 'whale') paintBlow(c, k, age, yw, l);
+    if (k.kind === 'seal') {
+      c.lineWidth = .8;
+      for (let n = 0; n < 2; n++) {
+        const tt = ((age - n * .8) % 1.6 + 1.6) % 1.6 / 1.6, rx = (6 + tt * 20) * k.s;
+        if (age < .3 || age > k.dur / 1000 - .4) break;
+        c.strokeStyle = `rgba(255,255,255,${(.4 * (1 - tt) * (.3 + .7 * l.L)).toFixed(3)})`;
+        c.beginPath(); c.ellipse(k.x + k.dir * 2 * k.s, yw + 1, rx, rx * .2, 0, 0, TAU); c.stroke();
+      }
+    }
+  }
+}
+// a grey seal's head: the long straight "Roman" nose is what tells it from a common seal
+function paintSeal(c, k, age, yw, l) {
+  const T = k.dur / 1000, rise = sstep(0, .7, age) * (1 - sstep(T - .7, T, age));
+  c.translate(k.x, yw + (1 - rise) * 24 * k.s + Math.sin(age * 2.3) * 1.2 * k.s);
+  c.scale(k.dir * k.s, k.s); c.rotate(Math.sin(age * .9) * .12);
+  c.fillStyle = tint([132, 128, 121], l);
+  c.beginPath(); c.moveTo(-8, 10); c.bezierCurveTo(-9.5, -4, -7, -14, 0, -17); c.bezierCurveTo(5, -18.5, 9.5, -16, 12.8, -13.2);
+  c.bezierCurveTo(13.8, -12.2, 13.2, -10.5, 11.6, -10.1); c.bezierCurveTo(8, -9.3, 6.2, -8, 6.2, -4); c.lineTo(6.2, 10); c.closePath(); c.fill();
+  noShadow(c);
+  c.fillStyle = tint([92, 88, 84], l);
+  for (const [x, y, r] of [[-3.5, -8, 1.5], [.5, -3.5, 1.1], [-5.5, -1, 1.3], [-1, -12.5, .8]]) { c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill(); }
+  c.fillStyle = '#15130f';
+  c.beginPath(); c.arc(3.4, -13.4, 1.6, 0, TAU); c.fill();
+  c.beginPath(); c.ellipse(12.3, -12.2, 1, .8, 0, 0, TAU); c.fill();
+  c.fillStyle = 'rgba(255,255,255,.8)'; c.beginPath(); c.arc(3.9, -13.9, .5, 0, TAU); c.fill();
+  c.strokeStyle = `rgba(255,255,255,${(.35 + .4 * l.L).toFixed(2)})`; c.lineWidth = .35;
+  c.beginPath(); c.moveTo(10.4, -11.2); c.lineTo(15.5, -12.3); c.moveTo(10.4, -10.8); c.lineTo(15.6, -10.2); c.moveTo(10, -10.4); c.lineTo(14.6, -8.6); c.stroke();
+}
+// a bottlenose dolphin leaping in an arc; the sea hides whatever is below the wave it came out of
+function paintDolphin(c, k, age, yw, l) {
+  const u = -.15 + age / (k.dur / 1000) * 1.3, span = 50 * k.s, H = 21 * k.s;
+  const px = k.x + k.dir * (u - .5) * span, py = yw - Math.sin(u * Math.PI) * H;
+  c.translate(px, py); c.scale(k.dir, 1); c.rotate(Math.atan2(-Math.PI * Math.cos(u * Math.PI) * H, span)); c.scale(k.s, k.s);
+  c.fillStyle = tint([78, 90, 102], l);
+  c.beginPath(); c.moveTo(15, .5); c.quadraticCurveTo(13, -1.2, 10, -1.8); c.quadraticCurveTo(8, -4.2, 3, -4.6); c.quadraticCurveTo(-1, -4.8, -2.5, -4.6);
+  c.quadraticCurveTo(-4.5, -8.8, -7.5, -10.2); c.quadraticCurveTo(-6.4, -7, -6.5, -4); c.quadraticCurveTo(-10, -3, -13, -1);
+  c.lineTo(-17.5, -4.4); c.quadraticCurveTo(-16, -.5, -17.5, 3.6); c.lineTo(-13, .9); c.quadraticCurveTo(-6, 3.8, 2, 3.7); c.quadraticCurveTo(9, 3.3, 12, 1.5);
+  c.quadraticCurveTo(14, 1.2, 15, .5); c.fill();
+  noShadow(c);
+  c.fillStyle = tint([200, 206, 210], l);
+  c.beginPath(); c.moveTo(12, 1.5); c.quadraticCurveTo(9, 3.3, 2, 3.7); c.quadraticCurveTo(-5, 3.7, -9, 2); c.quadraticCurveTo(-2, 1.4, 4, 1.2); c.quadraticCurveTo(9, 1, 12, 1.5); c.fill();
+  c.fillStyle = '#15130f'; c.beginPath(); c.arc(8.3, -1.2, .7, 0, TAU); c.fill();
+}
+// a minke whale: a blow, a long back rolling through with its small hooked fin, then the tail
+function paintWhale(c, k, age, yw, l) {
+  const s = k.s, d = k.dir, body = tint([54, 62, 72], l);
+  const tb = (age - .8) / 2.8;
+  if (tb > 0 && tb < 1) {
+    const hh = Math.sin(tb * Math.PI) * 12 * s, cx = k.x + d * (-24 + 48 * tb) * s, rx = 72 * s, ry = 34 * s, cy = yw + ry - hh - s;
+    c.fillStyle = body; c.beginPath(); c.ellipse(cx, cy, rx, ry, 0, 0, TAU); c.fill();
+    const fx = cx - d * 26 * s, fy = cy - ry * Math.sqrt(1 - Math.pow(26 * s / rx, 2)) + s;
+    c.save(); c.translate(fx, fy); c.scale(d * s, s);
+    c.beginPath(); c.moveTo(-5, 1); c.quadraticCurveTo(-4, -4, -6.5, -8.5); c.quadraticCurveTo(1, -5, 4, 1); c.closePath(); c.fill(); c.restore();
+  }
+  const tf = (age - 3.9) / 2;
+  if (tf > 0 && tf < 1) {
+    const rise = Math.sin(tf * Math.PI);
+    c.translate(k.x + d * 34 * s, yw + (1 - rise) * 30 * s); c.scale(d * s, s);
+    c.fillStyle = body;
+    c.beginPath(); c.moveTo(-3.2, 4); c.lineTo(-2, -12); c.quadraticCurveTo(-9, -15, -16, -23); c.quadraticCurveTo(-7, -21, 0, -17.5);
+    c.quadraticCurveTo(7, -21, 16, -23); c.quadraticCurveTo(9, -15, 2, -12); c.lineTo(3.2, 4); c.closePath(); c.fill();
+  }
+}
+function paintBlow(c, k, age, yw, l) {
+  if (age > 1.7) return;
+  const a = .5 * (1 - age / 1.7) * (.45 + .55 * l.L);
+  c.fillStyle = `rgba(242,246,248,${a.toFixed(3)})`;
+  for (let n = 0; n < 6; n++) {
+    const r = (2.5 + age * 5) * k.s * (.7 + (n % 3) * .2);
+    c.beginPath(); c.arc(k.x + k.dir * ((n - 2.5) * 1.6 * (1 + age) - 10) * k.s, yw - (8 + age * 24 + (n % 2) * 4) * k.s, r, 0, TAU); c.fill();
+  }
+}
+// a few herring gulls wheel over the bay; they hold still in the frame like the island, and keep off the dark
+function buildGulls() {
+  const R = mulberry(77), out = [];
+  for (const [fx, fy, n] of [[.3, .34, 3], [.7, .42, 2]]) {
+    for (let k = 0; k < n; k++) {
+      const rx = (50 + R() * 70) * G.sc;
+      out.push({ cx: G.V * fx + (R() - .5) * 60 * G.sc, cy: G.Hs * fy + (R() - .5) * 40 * G.sc, rx, ry: rx * (.22 + R() * .15),
+        w: (.22 + R() * .16) * (R() < .5 ? -1 : 1), ph: R() * TAU, flap: R() * TAU, size: (1.05 + R() * .4) * G.sc });
+    }
+  }
+  return out;
+}
+function paintGulls(c, now) {
+  for (const g of state.gulls || []) {
+    const a = g.ph + g.w * now / 1000, x = g.cx + Math.cos(a) * g.rx, y = g.cy + Math.sin(a) * g.ry;
+    const l = lookS(x), vis = clamp((l.L - .15) / .35, 0, 1) * clamp(1.2 - l.w.precip / 5, .25, 1);
+    if (vis < .03) continue;
+    const s = g.size * (1 + .2 * Math.sin(a)), heading = -Math.sin(a) * g.w < 0 ? -1 : 1;
+    const gliding = Math.sin(now * .0005 + g.flap) > -.3, beat = gliding ? .25 + .1 * Math.sin(now * .002 + g.flap) : Math.sin(now * .013 + g.flap);
+    c.save(); c.globalAlpha = vis; c.translate(x, y); c.scale(heading * s, s);
+    shadow(c, 2, 1, .22);
+    const wing = (far) => {
+      const lift = beat * (far ? 7 : 9), back = far ? 1.5 : 0;
+      c.fillStyle = far ? '#8d98a1' : '#a9b4bc';
+      c.beginPath(); c.moveTo(2 - back, -.5); c.quadraticCurveTo(-2 - back, -lift * .6 - 1, -5 - back, -lift - 1);
+      c.lineTo(-11 - back, -lift * 1.25 + 1.5); c.quadraticCurveTo(-5 - back, -lift * .4, -2 - back, .8); c.closePath(); c.fill();
+      c.fillStyle = '#1d1d1f';
+      c.beginPath(); c.moveTo(-8.6 - back, -lift * 1.13 + .3); c.lineTo(-11 - back, -lift * 1.25 + 1.5); c.lineTo(-7.6 - back, -lift * .92 + .6); c.closePath(); c.fill();
+    };
+    wing(true);
+    c.fillStyle = '#fbfaf6';
+    c.beginPath(); c.ellipse(0, 0, 6.5, 1.9, 0, 0, TAU); c.fill();
+    c.beginPath(); c.arc(5.4, -.9, 1.7, 0, TAU); c.fill();
+    c.beginPath(); c.moveTo(-6, -.4); c.lineTo(-9, .6); c.lineTo(-6, 1); c.closePath(); c.fill();
+    noShadow(c);
+    c.fillStyle = '#f2c230'; c.beginPath(); c.moveTo(6.8, -1.3); c.lineTo(9.2, -.6); c.lineTo(6.8, -.2); c.closePath(); c.fill();
+    wing(false);
+    c.restore();
+  }
+}
 let raf = 0;
-if (params.has('debug')) window.EV = { paperMoon, moonDisc, sunAlt, moonAlt, G, paint: () => paintScene() };
+if (params.has('debug')) window.EV = { paperMoon, moonDisc, sunAlt, moonAlt, G, paint: () => paintScene(), spawn: (kind) => spawnCreature(performance.now(), kind), creatures: () => state.creatures };
 function loop(now) { paintFx(now); raf = requestAnimationFrame(loop); }
 
 /* ---------- the tide staff ---------- */
