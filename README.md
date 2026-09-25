@@ -21,7 +21,7 @@ The skyline is the island's real profile seen from the sea off Douglas, from the
 
 The ruler underneath gives the same hours as numbers: temperature, rain per hour (bar opacity is the chance of rain) and wind speed and direction.
 
-The views are a week, 48 hours, 24 hours and 12 hours. In the narrower ones the ruler labels every hour and prints the rain amount on each bar.
+The whole forecast, about seven days, is always there: scroll right (trackpad, mouse wheel, swipe, Page Down, or the "later" tab) to move into the future, and Now to come back. The Week, 48 h, 24 h and 12 h buttons are zoom levels that set how many hours fit on one screen; zooming keeps the hour under the pointer where it was. The island stays fixed in the frame while time slides past it, and each column of the island is lit for whichever hour is passing over it. Only the visible stretch is drawn, so even the 12-hour zoom, about 19,000 px of timeline, repaints in a few milliseconds. In the closer zooms the ruler labels every hour and prints the rain amount on each bar.
 
 The tide is drawn at about 10 px a metre about a mean-sea-level line. A graduated tide staff rides the hover thread through the water: the tinted part is under water, and the red flag gives the height at that hour in metres above or below mean sea level. Tide tables quote height above chart datum instead, so their numbers are higher; compare the shape and times, not the figures.
 
@@ -34,7 +34,7 @@ python3 -m http.server 8000
 # then http://localhost:8000/
 ```
 
-The page opens on the view you last used in that browser, or 48 hours the first time. Query options: `?demo` shows a made-up week that exercises every kind of weather, and `?hours=168`, `48`, `24` or `12` opens on that view regardless.
+The page opens on the zoom you last used in that browser, or 48 hours the first time. Query options: `?demo` shows a made-up week that exercises every kind of weather, and `?hours=168`, `48`, `24` or `12` opens on that view regardless.
 
 ## Data
 

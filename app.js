@@ -33,7 +33,7 @@ const CACHE_KEY = 'ellan-vannin-forecast-v1';
 const params = new URLSearchParams(location.search);
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (id) => document.getElementById(id);
-const stage = $('stage'), inner = $('inner'), sceneCv = $('scene'), fxCv = $('fx');
+const stage = $('stage'), inner = $('inner'), view = $('view'), sceneCv = $('scene'), fxCv = $('fx');
 const sc = sceneCv.getContext('2d'), fx = fxCv.getContext('2d');
 
 /* ---------- small maths ---------- */
@@ -296,7 +296,7 @@ function buildLook() {
   const n = Math.ceil((G.span + 6 * HOUR) / STEP) + 1;
   const raw = Array.from({ length: n }, (_, i) => look(LT.t0 + i * STEP));
   // blur colours over about an hour and a half at week scale, half that at 48 hours
-  const r = G.hours > 72 ? 6 : G.hours > 30 ? 4 : 3, wts = Array.from({ length: 2 * r + 1 }, (_, k) => Math.exp(-Math.pow((k - r) / (r * .55), 2)));
+  const r = G.zoom > 72 ? 6 : G.zoom > 30 ? 4 : 3, wts = Array.from({ length: 2 * r + 1 }, (_, k) => Math.exp(-Math.pow((k - r) / (r * .55), 2)));
   const avg = (get, rr = r) => (i) => {
     const out = [0, 0, 0]; let sum = 0;
     for (let k = -rr; k <= rr; k++) { const c = get(raw[clamp(i + k, 0, n - 1)]), wt = Math.exp(-Math.pow(k / (rr * .55), 2)); out[0] += c[0] * wt; out[1] += c[1] * wt; out[2] += c[2] * wt; sum += wt; }
@@ -312,9 +312,12 @@ function buildLook() {
   });
 }
 const lookT = (t) => LT.a[clamp(Math.round((t - LT.t0) / STEP), 0, LT.a.length - 1)];
-const xOf = (t) => (t - G.t0) / G.span * G.W;
-const tOf = (x) => G.t0 + x / G.W * G.span;
+// x is a position on the whole scrollable timeline; screen x is that minus the scroll offset G.sx
+const xOf = (t) => (t - G.t0) / HOUR * G.pxh;
+const tOf = (x) => G.t0 + x / G.pxh * HOUR;
 const lookX = (x) => lookT(tOf(x));
+// the island stays put in the frame, so its colours come from whichever hour is passing over each screen column
+const lookS = (x) => lookX(x + G.sx);
 function skyX(x) {
   // sky strips interpolate between samples, or the 15-minute steps show as bands
   const f = clamp((tOf(x) - LT.t0) / STEP, 0, LT.a.length - 1), i = Math.floor(f), j = Math.min(LT.a.length - 1, i + 1), k = f - i;
@@ -334,8 +337,15 @@ let DPR = 1;
 function shadow(c, blur, dy, a) { c.shadowColor = `rgba(8,6,14,${a})`; c.shadowBlur = blur * DPR; c.shadowOffsetX = 0; c.shadowOffsetY = dy * DPR; }
 function noShadow(c) { c.shadowColor = 'transparent'; c.shadowBlur = 0; c.shadowOffsetY = 0; }
 function hGrad(c, fn) {
-  const g = c.createLinearGradient(0, 0, G.W, 0), n = Math.min(420, Math.ceil(G.span / (30 * 60e3)));
-  for (let i = 0; i <= n; i++) g.addColorStop(i / n, fn(lookX(i / n * G.W)));
+  // across the stretch of timeline being painted
+  const x0 = G.x0, x1 = G.x1, g = c.createLinearGradient(x0, 0, x1, 0), n = clamp(Math.ceil((x1 - x0) / Math.max(6, G.pxh / 2)), 2, 420);
+  for (let i = 0; i <= n; i++) g.addColorStop(i / n, fn(lookX(lerp(x0, x1, i / n))));
+  return g;
+}
+function hGradS(c, fn) {
+  // across the screen, for the island
+  const g = c.createLinearGradient(0, 0, G.V, 0), n = clamp(Math.ceil(G.V / Math.max(6, G.pxh / 2)), 2, 420);
+  for (let i = 0; i <= n; i++) g.addColorStop(i / n, fn(lookS(i / n * G.V)));
   return g;
 }
 function jCircle(R, cx, cy, r) {
@@ -371,15 +381,14 @@ function drawCloud(c, s, x, y, k, ky, col) {
   c.restore();
 }
 function sheet(c, topFn, botFn, colourFn, seed) {
-  const R = mulberry(seed), W = G.W, top = [];
-  let arch = 0, width = 18 + R() * 16, height = 4 + R() * 6;
-  for (let x = -8; x <= W + 8; x += 3) {
-    arch += 3; if (arch > width) { arch = 0; width = (16 + R() * 18) * G.sc; height = (3 + R() * 7) * G.sc; }
-    top.push([x, topFn(x) - Math.sin(Math.PI * arch / width) * height + (R() - .5) * 1.2]);
+  // scallops and jitter come from the absolute position, so a bank does not shimmer as it scrolls
+  const p = 24 * G.sc, a = Math.floor(G.x0 / 12) * 12 - 12, b = G.x1 + 12;
+  c.beginPath();
+  for (let x = a; x <= b; x += 3) {
+    const n = Math.floor(x / p), y = topFn(x) - Math.sin(Math.PI * (x / p - n)) * (3 + hash(n, seed) * 7) * G.sc + (hash(x, seed + .5) - .5) * 1.2;
+    if (x === a) c.moveTo(x, y); else c.lineTo(x, y);
   }
-  c.beginPath(); c.moveTo(top[0][0], top[0][1]);
-  for (const [x, y] of top) c.lineTo(x, y);
-  for (let x = W + 8; x >= -8; x -= 4) c.lineTo(x, botFn(x) + Math.sin(x / 17 + seed * 2) * 2.2 + (R() - .5) * 1.2);
+  for (let x = b - (b % 4); x >= a; x -= 4) c.lineTo(x, botFn(x) + Math.sin(x / 17 + seed * 2) * 2.2 + (hash(x, seed + .7) - .5) * 1.2);
   c.closePath();
   shadow(c, 7, 2, .22); c.fillStyle = hGrad(c, colourFn); c.fill(); noShadow(c);
 }
@@ -387,21 +396,22 @@ function sheet(c, topFn, botFn, colourFn, seed) {
 /* ---------- layout ---------- */
 function layout() {
   DPR = Math.min(2, devicePixelRatio || 1);
-  const Wv = stage.clientWidth, H = stage.clientHeight;
+  G.V = stage.clientWidth; const H = stage.clientHeight;
   G.t0 = floorHour(Date.now());
-  const available = Math.floor((DATA.t[DATA.n - 1] - G.t0) / HOUR);
-  G.hours = clamp(state.hours, 12, available);
-  G.span = G.hours * HOUR;
-  G.W = Math.max(Wv, Math.ceil(G.hours * 7));
+  // the whole forecast is always there; the buttons set how many hours fit on one screen
+  G.hours = clamp(Math.floor((DATA.t[DATA.n - 1] - G.t0) / HOUR), 12, 192);
+  G.zoom = state.hours >= 168 ? G.hours : Math.min(state.hours, G.hours);
+  G.pxh = Math.max(G.V / G.zoom, 7);
+  G.W = Math.ceil(G.hours * G.pxh); G.span = G.hours * HOUR;
   G.H = H; G.R = clamp(Math.round(H * .17), 104, 124); G.Hs = H - G.R;
   G.sc = clamp(G.Hs / 650, .72, 1.3);
   G.yS = Math.round(G.Hs * .75); G.k = G.Hs * .3 / 621;
   G.tPx = G.Hs * .016; G.yM = G.yS + 3.7 * G.tPx;
-  G.colW = G.W / G.hours;
-  inner.style.width = G.W + 'px';
+  G.colW = G.pxh;
+  inner.style.width = G.W + 'px'; view.style.width = G.V + 'px';
   for (const cv of [sceneCv, fxCv]) {
-    cv.width = Math.round(G.W * DPR); cv.height = Math.round(H * DPR);
-    cv.style.width = G.W + 'px'; cv.style.height = H + 'px';
+    cv.width = Math.round(G.V * DPR); cv.height = Math.round(H * DPR);
+    cv.style.width = G.V + 'px'; cv.style.height = H + 'px';
   }
   state.cursor = clamp(state.cursor, 0, G.hours);
 }
@@ -421,10 +431,23 @@ function buildSlots() {
   SLOTS.low = make(40, 44, 110, 20, 36, 0, 0, false);
 }
 
+function buildScenery() {
+  const R = mulberry(7), n = Math.round(G.W * G.yS / 700);
+  G.stars = Array.from({ length: n }, () => ({ x: R() * G.W, y: Math.pow(R(), 1.25) * G.yS * .9, r: .45 + Math.pow(R(), 4) * 1.6, tw: R() })).sort((a, b) => a.x - b.x);
+  G.ridges = Object.fromEntries(LAYERS.map(([key, lift, scale, seed]) => [key, ridgePoints(key, lift, scale, seed)]));
+  const H = mulberry(51), s = G.sc, end = xLat(54.172);
+  G.houses = [];
+  for (let x = xLat(54.1465); x < end;) {
+    const w = (5 + H() * 3.5) * s, h = (7 + H() * 7) * s;
+    G.houses.push({ x, w, h, lit: Array.from({ length: 6 }, () => H() < .7) });
+    x += w + .4;
+  }
+}
+
 /* ---------- the scene ---------- */
 function paintSky(c) {
   const bottom = G.yS + 40;
-  for (let x = 0; x < G.W; x += 2) {
+  for (let x = Math.floor(G.x0 / 2) * 2; x < G.x1; x += 2) {
     const k = skyX(x + 1), g = c.createLinearGradient(0, 0, 0, bottom);
     g.addColorStop(0, rgba(k.top)); g.addColorStop(.58, rgba(k.mid)); g.addColorStop(1, rgba(k.hor));
     c.fillStyle = g; c.fillRect(x, 0, 2.6, bottom);
@@ -433,8 +456,9 @@ function paintSky(c) {
 function paintTwilight(c) {
   // dawn and dusk as soft warm glows on the horizon, since at week scale they last only a few pixels
   const rx = clamp(G.colW * 2.4, 34, 240), ry = G.Hs * .42;
-  let prev = sunAlt(tOf(0));
-  for (let x = 2; x <= G.W; x += 2) {
+  const from = Math.floor((G.x0 - rx) / 2) * 2;
+  let prev = sunAlt(tOf(from - 2));
+  for (let x = from; x <= G.x1 + rx; x += 2) {
     const e = sunAlt(tOf(x));
     if ((prev < -1) !== (e < -1)) {
       const rising = e > prev, l = lookX(x), a = .6 * (1 - l.oc * .85);
@@ -451,9 +475,10 @@ function paintTwilight(c) {
   }
 }
 function paintStars(c) {
-  const R = mulberry(7), n = Math.round(G.W * G.yS / 700);
-  for (let i = 0; i < n; i++) {
-    const x = R() * G.W, y = Math.pow(R(), 1.25) * G.yS * .9, r = .45 + Math.pow(R(), 4) * 1.6, tw = R();
+  for (const st of G.stars) {
+    if (st.x < G.x0) continue;
+    if (st.x > G.x1) break;
+    const { x, y, r, tw } = st;
     const l = lookX(x), a = l.dark * (1 - l.w.cloud / 100) * (.3 + .7 * tw);
     if (a < .03) continue;
     c.fillStyle = `rgba(255,248,230,${a.toFixed(3)})`;
@@ -498,7 +523,7 @@ function paintSunMoon(c) {
   // one fixed scale for sun and moon: 0 to 66 degrees, the most the moon can reach at this latitude
   const r = clamp(G.colW * 1.8, 14, 26) * G.sc, top = r * 1.5 + 8, base = G.yS - 6, yE = (e) => base - clamp(e, 0, 66) / 66 * (base - top);
   const xs = [], se = [], me = [];
-  for (let x = 0; x <= G.W; x += 2) { const t = tOf(x); xs.push(x); se.push(sunAlt(t)); me.push(moonAlt(t)); }
+  for (let x = Math.floor((G.x0 - 60) / 2) * 2; x <= G.x1 + 60; x += 2) { const t = tOf(x); xs.push(x); se.push(sunAlt(t)); me.push(moonAlt(t)); }
   const path = (arr, style, dash) => {
     c.save(); c.setLineDash(dash); c.lineWidth = 1.2; c.strokeStyle = style; c.beginPath();
     let on = false;
@@ -520,12 +545,13 @@ function paintSunMoon(c) {
 function paintFarSea(c) {
   // the open sea at the horizon, behind the island, so a low tide never uncovers bare canvas
   c.fillStyle = hGrad(c, (l) => rgba(mix(l.sea, l.sky.hor, .3)));
-  c.fillRect(0, G.yS - 3, G.W, G.Hs - G.yS + 3);
+  c.fillRect(G.x0, G.yS - 3, G.x1 - G.x0, G.Hs - G.yS + 3);
   c.fillStyle = hGrad(c, (l) => rgba(l.sky.hor, .55 * l.L));
-  c.fillRect(0, G.yS - 3, G.W, 1.2);
+  c.fillRect(G.x0, G.yS - 3, G.x1 - G.x0, 1.2);
 }
 function paintHighCloud(c) {
   for (const s of SLOTS.high) {
+    if (s.x + s.w < G.x0 || s.x - s.w > G.x1) continue;
     const l = lookX(s.x), hc = l.w.high / 100;
     if (hc < s.th * .9 + .06) continue;
     c.fillStyle = rgba(l.cHigh, clamp(.22 + hc * .5, 0, .72));
@@ -542,6 +568,7 @@ function paintMidCloud(c) {
   const top = G.Hs * .2, bot = G.Hs * .3;
   sheet(c, () => top, () => bot, (l) => rgba(l.cMid, .85 * l.midA), 3);
   for (const s of SLOTS.mid) {
+    if (s.x + s.w < G.x0 || s.x - s.w > G.x1) continue;
     const l = lookX(s.x), mc = l.w.mid / 100;
     if (mc < s.th * .9 + .05) continue;
     drawCloud(c, s, s.x, s.y, .72 + mc * .4, 1, l.cMid);
@@ -551,7 +578,7 @@ function ridgePoints(key, lift, scale, seed) {
   const h = PROFILE[key], N = h.length, R = mulberry(seed), pts = [];
   let px = null, py = null;
   for (let i = 0; i < N; i++) {
-    const x = i / (N - 1) * G.W, y = h[i] > 0 ? G.yS - lift * G.sc - h[i] * G.k * scale : G.yS + 4;
+    const x = i / (N - 1) * G.V, y = h[i] > 0 ? G.yS - lift * G.sc - h[i] * G.k * scale : G.yS + 4;
     if (px !== null) {
       const steps = Math.max(1, Math.round((x - px) / 4));
       for (let s = 1; s < steps; s++) { const u = s / steps; pts.push([lerp(px, x, u), lerp(py, y, u) + (R() - .5) * .8]); }
@@ -561,18 +588,18 @@ function ridgePoints(key, lift, scale, seed) {
   return pts;
 }
 function heightAt(key, x, lift, scale) {
-  const h = PROFILE[key], f = clamp(x / G.W * (h.length - 1), 0, h.length - 1), i = Math.floor(f), j = Math.min(h.length - 1, i + 1);
+  const h = PROFILE[key], f = clamp(x / G.V * (h.length - 1), 0, h.length - 1), i = Math.floor(f), j = Math.min(h.length - 1, i + 1);
   return G.yS - lift * G.sc - lerp(h[i], h[j], f - i) * G.k * scale;
 }
 const LAYERS = [['far', 9, 1, 31], ['mid', 4, 1, 32], ['near', -2, .94, 33]];
-function paintLand(c, key, lift, scale, seed) {
-  const pts = ridgePoints(key, lift, scale, seed);
+function paintLand(c, key) {
+  const pts = G.ridges[key];
   c.beginPath(); c.moveTo(-6, G.yS + 4);
   for (const [x, y] of pts) c.lineTo(x, y);
-  c.lineTo(G.W + 6, G.yS + 4); c.closePath();
-  shadow(c, 9, 3, .32); c.fillStyle = hGrad(c, (l) => rgba(l[key])); c.fill(); noShadow(c);
+  c.lineTo(G.V + 6, G.yS + 4); c.closePath();
+  shadow(c, 9, 3, .32); c.fillStyle = hGradS(c, (l) => rgba(l[key])); c.fill(); noShadow(c);
   c.beginPath(); pts.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y));
-  c.lineWidth = 1; c.strokeStyle = hGrad(c, (l) => `rgba(255,244,222,${(.05 + .2 * l.L * (1 - l.oc * .6)).toFixed(3)})`); c.stroke();
+  c.lineWidth = 1; c.strokeStyle = hGradS(c, (l) => `rgba(255,244,222,${(.05 + .2 * l.L * (1 - l.oc * .6)).toFixed(3)})`); c.stroke();
 }
 function paintHillFog(c) {
   sheet(c,
@@ -586,12 +613,13 @@ function paintLowCloud(c) {
     (x) => lowBaseY(lookX(x).w) + 5,
     (l) => rgba(l.cLow, .96 * l.stratusA), 5);
   for (const s of SLOTS.low) {
+    if (s.x + s.w < G.x0 || s.x - s.w > G.x1) continue;
     const l = lookX(s.x), lc = l.w.low / 100;
     if (lc < s.th * .92 + .04) continue;
     drawCloud(c, s, s.x, lowBaseY(l.w) + s.dy * 10 * G.sc, .68 + lc * .45, 1 + convective(l.w.code) * .9, l.cLow);
   }
 }
-const xLat = (lat) => (lat - PROFILE.latSouth) / (PROFILE.latNorth - PROFILE.latSouth) * G.W;
+const xLat = (lat) => (lat - PROFILE.latSouth) / (PROFILE.latNorth - PROFILE.latSouth) * G.V;
 function paintShore(c) {
   const far = PROFILE.far, N = far.length, R = mulberry(41), runs = [];
   let start = -1;
@@ -601,10 +629,10 @@ function paintShore(c) {
     if (!land && start >= 0) { runs.push([start, i - 1]); start = -1; }
   }
   const top = G.yS + 1, bot = G.yM + 5 * G.tPx;
-  c.fillStyle = hGrad(c, (l) => rgba(l.sand));
+  c.fillStyle = hGradS(c, (l) => rgba(l.sand));
   shadow(c, 5, 1.5, .25);
   for (const [a, b] of runs) {
-    const x0 = a / (N - 1) * G.W, x1 = b / (N - 1) * G.W;
+    const x0 = a / (N - 1) * G.V, x1 = b / (N - 1) * G.V;
     if (x1 - x0 < 4) continue;
     c.beginPath(); c.moveTo(x0 - 5, bot); c.lineTo(x0 + 2, top + 2);
     for (let x = x0 + 4; x < x1 - 2; x += 5) c.lineTo(x, top + (R() - .5) * 1.4);
@@ -615,20 +643,19 @@ function paintShore(c) {
 function paintLandmarks(c) {
   const s = G.sc;
   // Douglas promenade: a terrace of white-fronted hotels
-  const R = mulberry(51), x0 = xLat(54.1465), x1 = xLat(54.172);
   shadow(c, 3, 1, .3);
-  for (let x = x0; x < x1;) {
-    const w = (5 + R() * 3.5) * s, h = (7 + R() * 7) * s, l = lookX(x + w / 2), base = G.yS + 2;
+  for (const { x, w, h, lit } of G.houses) {
+    const l = lookS(x + w / 2), base = G.yS + 2;
     c.fillStyle = rgba(l.house); c.fillRect(x, base - h, w, h);
     c.fillStyle = rgba(l.roof); c.beginPath(); c.moveTo(x - .6, base - h); c.lineTo(x + w / 2, base - h - w * .45); c.lineTo(x + w + .6, base - h); c.closePath(); c.fill();
     if (l.L < .4) {
       c.fillStyle = `rgba(255,208,120,${(.95 - l.L).toFixed(2)})`;
-      for (let wy = base - h + 2.5 * s; wy < base - 2 * s; wy += 3.4 * s) if (R() < .7) c.fillRect(x + w * .3, wy, Math.max(1, w * .35), 1.4 * s);
+      let k = 0;
+      for (let wy = base - h + 2.5 * s; wy < base - 2 * s; wy += 3.4 * s, k++) if (lit[k % 6]) c.fillRect(x + w * .3, wy, Math.max(1, w * .35), 1.4 * s);
     }
-    x += w + .4;
   }
   // the Laxey Wheel on its white tower
-  const lx = xLat(54.2325), ly = heightAt('near', lx, -2, .94) + 5 * s, lw = lookX(lx), wr = 6.5 * s;
+  const lx = xLat(54.2325), ly = heightAt('near', lx, -2, .94) + 5 * s, lw = lookS(lx), wr = 6.5 * s;
   c.fillStyle = rgba(lw.stone); c.fillRect(lx - 2.4 * s, ly - wr, 4.8 * s, wr + 6 * s);
   c.strokeStyle = rgba(lw.wheel); c.lineWidth = 1.6 * s;
   c.beginPath(); c.arc(lx, ly - wr, wr, 0, TAU); c.stroke();
@@ -653,7 +680,7 @@ function paintLighthouses(c, atSea) {
   const s = G.sc;
   for (const lh of LIGHTS) {
     if (!!lh.sea !== atSea) continue;
-    const x = clamp(xLat(lh.lat), 12 * s, G.W - 12 * s), l = lookX(x);
+    const x = clamp(xLat(lh.lat), 12 * s, G.V - 12 * s), l = lookS(x);
     const h = (9 + lh.tower * .33) * s, wb = Math.max(4, h * .27), wt = lh.look === 'beacon' ? wb * .9 : wb * .72;
     const base = atSea ? G.yM - 1.5 * s : G.yS - lh.base * G.k, low = G.yM + 3.2 * G.tPx;
     shadow(c, 4, 1.5, .3);
@@ -685,7 +712,7 @@ function paintLighthouses(c, atSea) {
 }
 function paintTower(c) {
   // Tower of Refuge on Conister Rock, Douglas Bay
-  const s = G.sc, x = xLat(54.1505) + 6 * s, l = lookX(x), base = G.yM + .6 * G.tPx;
+  const s = G.sc, x = xLat(54.1505) + 6 * s, l = lookS(x), base = G.yM + .6 * G.tPx;
   shadow(c, 4, 1.5, .3);
   c.fillStyle = rgba(l.rock); c.beginPath(); c.moveTo(x - 13 * s, base + 4 * s); c.lineTo(x - 8 * s, base - 2 * s); c.lineTo(x + 7 * s, base - 3 * s); c.lineTo(x + 14 * s, base + 4 * s); c.closePath(); c.fill();
   c.fillStyle = rgba(l.stone);
@@ -701,23 +728,23 @@ function paintSea(c) {
   offs.forEach((o, j) => {
     const lam = (24 + j * 15) * G.sc, ph = j * 1.9, ampK = (.5 + j * .5) * G.sc;
     const amp = (l) => (.7 + clamp(Number.isFinite(l.w.wave) ? l.w.wave : .4, .1, 6) * 1.25) * ampK;
-    c.beginPath(); c.moveTo(-6, G.Hs + 6);
+    c.beginPath(); c.moveTo(G.x0 - 6, G.Hs + 6);
     // strips close up towards low water, so the sea never runs out of depth
     const top = (l) => { const y = tideY(l); return y + o * (G.Hs - y); };
-    for (let x = -6; x <= G.W + 6; x += 3) { const l = lookX(x); c.lineTo(x, top(l) + amp(l) * Math.sin(x / lam * TAU + ph)); }
-    c.lineTo(G.W + 6, G.Hs + 6); c.closePath();
+    for (let x = Math.floor((G.x0 - 6) / 3) * 3; x <= G.x1 + 6; x += 3) { const l = lookX(x); c.lineTo(x, top(l) + amp(l) * Math.sin(x / lam * TAU + ph)); }
+    c.lineTo(G.x1 + 6, G.Hs + 6); c.closePath();
     shadow(c, 6, -1.5, .3); c.fillStyle = hGrad(c, (l) => rgba(mix(l.sea, C.black, j * .09))); c.fill(); noShadow(c);
-    for (let n = Math.floor(-G.W / lam) - 1; ; n++) {
+    for (let n = Math.floor(G.x0 / lam) - 1; ; n++) {
       const x = (Math.PI / 2 + n * TAU - ph) / TAU * lam;
-      if (x > G.W) break;
-      if (x < 0) continue;
+      if (x > G.x1) break;
+      if (x < G.x0) continue;
       const l = lookX(x), p = clamp((l.w.wind - 11) / 26, 0, .85);
       if (hash(n, j) >= p) continue;
       const y = top(l) - amp(l);
       c.fillStyle = `rgba(250,250,244,${(.55 + .4 * l.L).toFixed(2)})`;
       c.beginPath(); c.ellipse(x, y + 1.2, (3 + j * 1.6) * G.sc, (1.1 + j * .45) * G.sc, 0, Math.PI, TAU); c.fill();
     }
-    if (j === 0) paintTower(c);
+    if (j === 0) { c.save(); c.setTransform(DPR, 0, 0, DPR, 0, 0); paintTower(c); c.restore(); }
   });
 }
 function paintVeil(c) {
@@ -725,7 +752,7 @@ function paintVeil(c) {
   c.fillStyle = g;
   for (let i = 0; i < 8; i++) {
     const y = lerp(G.Hs * .25, G.yS + 10, i / 7);
-    c.globalAlpha = .07 + i * .035; c.fillRect(0, y, G.W, G.Hs - y);
+    c.globalAlpha = .07 + i * .035; c.fillRect(G.x0, y, G.x1 - G.x0, G.Hs - y);
   }
   c.globalAlpha = 1;
 }
@@ -736,11 +763,8 @@ const GRAIN = (() => {
   x.putImageData(im, 0, 0);
   return cv;
 })();
-function paintGrain(c, y, h) {
-  c.save(); c.globalCompositeOperation = 'multiply'; c.globalAlpha = .45;
-  c.fillStyle = c.createPattern(GRAIN, 'repeat'); c.fillRect(0, y, G.W, h);
-  c.restore();
-}
+// the paper grain sits over the frame as one CSS layer, so it costs nothing while scrolling
+$('grain').style.backgroundImage = `url(${GRAIN.toDataURL()})`;
 
 /* ---------- the ruler ---------- */
 function hourMarks() {
@@ -770,48 +794,52 @@ function arrow(c, x, y, from, len, col) {
 function paintRuler(c, hm, segs) {
   const css = getComputedStyle(document.documentElement), v = (n) => hex(css.getPropertyValue(n).trim());
   const tape = v('--tape'), ink = v('--ink'), soft = v('--ink-soft');
-  const y0 = G.Hs, W = G.W, cw = G.colW, R = mulberry(5);
+  const y0 = G.Hs, W = G.W, cw = G.colW, a = G.x0, b = G.x1;
+  const iA = clamp(Math.floor(a / G.pxh), 0, G.hours), iB = clamp(Math.ceil(b / G.pxh), 0, G.hours);
   c.save(); shadow(c, 10, -2, .45);
-  c.beginPath(); c.moveTo(-4, y0 + 2);
-  for (let x = 0; x <= W + 4; x += 4) c.lineTo(x, y0 + .5 + R() * 3);
-  c.lineTo(W + 4, G.H + 4); c.lineTo(-4, G.H + 4); c.closePath(); c.fillStyle = rgba(tape); c.fill();
+  c.beginPath(); c.moveTo(a - 4, y0 + 2);
+  for (let x = Math.floor(a / 4) * 4; x <= b + 4; x += 4) c.lineTo(x, y0 + .5 + hash(x, 5) * 3);
+  c.lineTo(b + 4, G.H + 4); c.lineTo(a - 4, G.H + 4); c.closePath(); c.fillStyle = rgba(tape); c.fill();
   c.restore();
-  for (let i = 0; i < G.hours; i++) {
+  for (let i = iA; i < iB; i++) {
     const k = sstep(0, -8, sunAlt(G.t0 + (i + .5) * HOUR));
     if (k > .01) { c.fillStyle = rgba(ink, .08 * k); c.fillRect(xOf(G.t0 + i * HOUR), y0 + 4, cw + .7, G.R - 4); }
   }
-  // day labels and midnights
+  // day labels sit in the middle of whatever part of their day is on screen
   c.textBaseline = 'middle'; c.textAlign = 'center';
   segs.forEach((s, n) => {
-    const xa = xOf(hm[s.a].t), xb = xOf(hm[s.b].t + HOUR), w = xb - xa;
+    const xa = xOf(hm[s.a].t), xb = xOf(hm[s.b].t + HOUR);
+    if (xb < a || xa > b) return;
     if (n > 0) { c.fillStyle = rgba(ink, .28); c.fillRect(xa, y0 + 5, 1, G.R - 9); }
+    const va = Math.max(xa, G.sx), vb = Math.min(xb, G.sx + G.V - 34), w = vb - va;
     const label = n === 0 ? (w > 46 ? 'Today' : '')
       : w > 150 ? `${s.weekday} ${s.day} ${s.month.slice(0, 3)}` : w > 70 ? `${s.weekday.slice(0, 3)} ${s.day}` : w > 22 ? s.weekday.slice(0, 2) : '';
     c.font = font(400, 14, 'IM Fell English SC'); c.fillStyle = rgba(ink);
-    if (label) c.fillText(label, clamp(xa + w / 2, xa + 12, xb - 12), y0 + 16);
+    if (label) c.fillText(label, (va + vb) / 2, y0 + 16);
   });
   // hour ticks
   const tickEvery = cw >= 26 ? 1 : cw * 3 >= 26 ? 3 : 6;
   c.font = font(400, 10.5); c.fillStyle = rgba(soft);
-  hm.forEach((m, i) => {
-    if (m.hour === 0 || m.hour % tickEvery) return;
+  for (let i = iA; i <= iB; i++) {
+    const m = hm[i];
+    if (m.hour === 0 || m.hour % tickEvery) continue;
     const x = xOf(m.t);
     c.fillRect(x, y0 + 26, 1, 3);
-    if (x > 10 && x < W - 44 && cw * tickEvery >= 22 && (tickEvery < 6 || m.hour === 12)) c.fillText(String(m.hour).padStart(2, '0'), x, y0 + 35);
-  });
+    if (x - G.sx > 10 && x - G.sx < G.V - 46 && cw * tickEvery >= 22 && (tickEvery < 6 || m.hour === 12)) c.fillText(String(m.hour).padStart(2, '0'), x, y0 + 35);
+  }
   // temperature ribbon
-  const ty = y0 + 42, th = 15, tg = c.createLinearGradient(0, 0, W, 0);
-  for (let i = 0; i <= G.hours; i++) tg.addColorStop(i / G.hours, rgba(tempColour(DATA.temp[idxOf(G.t0 + i * HOUR)])));
+  const ty = y0 + 42, th = 15, tg = c.createLinearGradient(xOf(G.t0 + iA * HOUR), 0, xOf(G.t0 + iB * HOUR), 0);
+  for (let i = iA; i <= iB; i++) tg.addColorStop((i - iA) / Math.max(1, iB - iA), rgba(tempColour(DATA.temp[idxOf(G.t0 + i * HOUR)])));
   c.save(); shadow(c, 3, 1, .22); c.fillStyle = tg; c.beginPath(); c.roundRect(0, ty, W, th, 3); c.fill(); c.restore();
   c.font = font(600, 11.5); c.fillStyle = '#2a241c';
   const placed = [];
   const tempLabel = (i) => {
     const x = clamp(xOf(G.t0 + i * HOUR), 12, W - 50);
-    if (placed.some((p) => Math.abs(p - x) < 26)) return;
+    if (x - G.sx < 12 || x - G.sx > G.V - 50 || placed.some((p) => Math.abs(p - x) < 26)) return;
     placed.push(x); c.fillText(`${Math.round(DATA.temp[idxOf(G.t0 + i * HOUR)])}°`, x, ty + th / 2 + .5);
   };
-  if (cw >= 30) hm.forEach((m, i) => { if (i < G.hours) tempLabel(i); });
-  else if (cw * 3 >= 26) hm.forEach((m, i) => { if (m.hour % 3 === 0 && i < G.hours) tempLabel(i); });
+  if (cw >= 30) { for (let i = iA; i <= Math.min(iB, G.hours - 1); i++) tempLabel(i); }
+  else if (cw * 3 >= 26) { for (let i = iA; i <= Math.min(iB, G.hours - 1); i++) if (hm[i].hour % 3 === 0) tempLabel(i); }
   else segs.forEach((s) => {
     if (xOf(hm[s.b].t) - xOf(hm[s.a].t) < 30) return;
     let hi = s.a, lo = s.a;
@@ -820,8 +848,8 @@ function paintRuler(c, hm, segs) {
   });
   // rain bars, one per hour
   const ry = y0 + 62, rh = 20;
-  c.fillStyle = rgba(ink, .18); c.fillRect(0, ry + rh, W, 1);
-  for (let i = 0; i < G.hours; i++) {
+  c.fillStyle = rgba(ink, .18); c.fillRect(a, ry + rh, b - a, 1);
+  for (let i = iA; i < iB; i++) {
     const j = idxOf(G.t0 + (i + 1) * HOUR), p = DATA.precip[j];
     if (p < .05) continue;
     const hgt = Math.max(1.5, Math.sqrt(Math.min(p, 8) / 8) * rh), snow = DATA.snow[j] > 0;
@@ -838,23 +866,25 @@ function paintRuler(c, hm, segs) {
   // wind arrows
   const wy = y0 + 97, every = [1, 2, 3, 6, 12].find((h) => h * cw >= 34) || 12;
   c.textAlign = 'left'; c.font = font(500, 11);
-  hm.forEach((m, i) => {
-    if (i >= G.hours || m.hour % every) return;
+  for (let i = iA; i < Math.min(iB, G.hours); i++) {
+    const m = hm[i];
+    if (m.hour % every) continue;
     const x = xOf(m.t), j = idxOf(m.t), sp = DATA.wind[j];
-    if (x < 8 || x > W - 46) return;
+    if (x - G.sx < 8 || x - G.sx > G.V - 46) continue;
     const col = sp >= 39 ? '#c8102e' : sp >= 25 ? '#c9811d' : rgba(sp >= 13 ? ink : soft);
     arrow(c, x - 5, wy, DATA.dir[j], 13, col);
     c.fillStyle = col; c.fillText(String(Math.round(sp)), x + 4, wy + .5);
-  });
-  // units, on a scrap of tape at the right-hand end
-  const ux = W - 34;
-  c.fillStyle = rgba(tape, .92); c.fillRect(ux, ty - 2, 34, G.R - (ty - y0));
-  c.textAlign = 'center'; c.fillStyle = rgba(soft); c.font = font(400, 11, 'IM Fell English SC');
-  c.fillText('°c', ux + 17, ty + th / 2); c.fillText('mm', ux + 17, ry + rh / 2 + 2); c.fillText('mph', ux + 17, wy);
+  }
   // now
   const xn = xOf(Date.now());
   c.fillStyle = '#c8102e'; c.beginPath(); c.moveTo(xn - 5, y0 + 1); c.lineTo(xn + 5, y0 + 1); c.lineTo(xn, y0 + 8); c.closePath(); c.fill();
-  paintGrain(c, y0, G.R);
+  // units, on a scrap of tape pinned to the right-hand edge of the screen
+  c.save(); c.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const ux = G.V - 34;
+  c.fillStyle = rgba(tape, .94); c.fillRect(ux, ty - 2, 34, G.R - (ty - y0));
+  c.textAlign = 'center'; c.fillStyle = rgba(soft); c.font = font(400, 11, 'IM Fell English SC');
+  c.fillText('°c', ux + 17, ty + th / 2); c.fillText('mm', ux + 17, ry + rh / 2 + 2); c.fillText('mph', ux + 17, wy);
+  c.restore();
 }
 
 /* ---------- rain, snow, lightning ---------- */
@@ -874,12 +904,13 @@ function buildFx() {
   }
 }
 function paintFx(now) {
-  const c = fx;
-  c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, G.W, G.H);
+  const c = fx, lo = G.sx - G.colW - 40, hi = G.sx + G.V + 40;
+  c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, G.V, G.H);
   c.lineCap = 'round';
+  c.save(); c.translate(-G.sx, 0);
   for (const col of state.fxCols) {
     const span = col.bottom - col.top;
-    if (span < 10) continue;
+    if (span < 10 || col.x0 < lo || col.x0 > hi) continue;
     if (col.snow) {
       c.fillStyle = 'rgba(250,250,255,.92)';
       for (const d of col.drops) {
@@ -900,6 +931,24 @@ function paintFx(now) {
       c.stroke();
     }
   }
+  for (const s of state.storms) {
+    if (reduce) break;
+    if (now > s.next) {
+      s.until = now + 170; s.next = now + 1800 + Math.random() * 5200;
+      const pts = [[s.x0 + G.colW / 2 + (Math.random() - .5) * 20, s.top]];
+      while (pts[pts.length - 1][1] < s.bottom) { const [px, py] = pts[pts.length - 1]; pts.push([px + (Math.random() - .5) * 16, py + 8 + Math.random() * 12]); }
+      s.bolt = pts;
+    }
+    if (now < s.until && s.bolt && s.x0 > lo && s.x0 < hi) {
+      const cx = s.x0 + G.colW / 2, glow = c.createRadialGradient(cx, s.top, 0, cx, s.top, 160 * G.sc);
+      glow.addColorStop(0, 'rgba(255,250,228,.34)'); glow.addColorStop(1, 'rgba(255,250,228,0)');
+      c.fillStyle = glow; c.fillRect(cx - 170 * G.sc, 0, 340 * G.sc, G.yS + 30);
+      c.save(); c.shadowColor = 'rgba(255,248,210,.9)'; c.shadowBlur = 10 * DPR;
+      c.strokeStyle = '#fffbe6'; c.lineWidth = 2; c.beginPath();
+      s.bolt.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.stroke(); c.restore();
+    }
+  }
+  c.restore();
   for (const lp of G.lamps) {
     if (!lp.on) continue;
     const I = reduce ? .7 : flashLevel(now / 1000 + lp.phase, lp.group, lp.period), s = G.sc, spread = 1 + lp.fog * 1.5;
@@ -912,23 +961,6 @@ function paintFx(now) {
       const r = 90 * s * I * spread, g = c.createRadialGradient(0, 0, 0, 0, 0, r);
       g.addColorStop(0, rgba(col, .7 * I)); g.addColorStop(1, rgba(col, 0));
       c.fillStyle = g; c.fillRect(-r, -r, r * 2, r * 2); c.restore();
-    }
-  }
-  for (const s of state.storms) {
-    if (reduce) break;
-    if (now > s.next) {
-      s.until = now + 170; s.next = now + 1800 + Math.random() * 5200;
-      const pts = [[s.x0 + G.colW / 2 + (Math.random() - .5) * 20, s.top]];
-      while (pts[pts.length - 1][1] < s.bottom) { const [px, py] = pts[pts.length - 1]; pts.push([px + (Math.random() - .5) * 16, py + 8 + Math.random() * 12]); }
-      s.bolt = pts;
-    }
-    if (now < s.until && s.bolt) {
-      const cx = s.x0 + G.colW / 2, glow = c.createRadialGradient(cx, s.top, 0, cx, s.top, 160 * G.sc);
-      glow.addColorStop(0, 'rgba(255,250,228,.34)'); glow.addColorStop(1, 'rgba(255,250,228,0)');
-      c.fillStyle = glow; c.fillRect(cx - 170 * G.sc, 0, 340 * G.sc, G.yS + 30);
-      c.save(); c.shadowColor = 'rgba(255,248,210,.9)'; c.shadowBlur = 10 * DPR;
-      c.strokeStyle = '#fffbe6'; c.lineWidth = 2; c.beginPath();
-      s.bolt.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.stroke(); c.restore();
     }
   }
 }
@@ -944,7 +976,7 @@ function glow(c, x, y, r, col, a) {
   c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2);
 }
 let raf = 0;
-if (params.has('debug')) window.EV = { paperMoon, moonDisc, sunAlt, moonAlt, G };
+if (params.has('debug')) window.EV = { paperMoon, moonDisc, sunAlt, moonAlt, G, paint: () => paintScene() };
 function loop(now) { paintFx(now); raf = requestAnimationFrame(loop); }
 
 /* ---------- the tide staff ---------- */
@@ -974,7 +1006,7 @@ function placeStaff(x, j) {
   const v = DATA.tide[j];
   staff.hidden = !Number.isFinite(v);
   if (staff.hidden) return;
-  const flip = x > G.W - 90, level = tideAt(v) - G.staff.y0;
+  const flip = x > G.V - 90, level = tideAt(v) - G.staff.y0;
   staff.style.left = `${flip ? x - 33 : x + 3}px`;
   staff.classList.toggle('flip', flip);
   staff.style.setProperty('--level', `${clamp(level, 0, G.staff.h).toFixed(1)}px`);
@@ -1009,9 +1041,15 @@ function setCursor(i, scroll) {
   if (!DATA) return;
   i = clamp(Math.round(i), 0, G.hours);
   state.cursor = i;
-  const t = G.t0 + i * HOUR, x = xOf(t), j = idxOf(t), l = lookT(t), w = l.w;
+  const t = G.t0 + i * HOUR, cx = xOf(t), j = idxOf(t), l = lookT(t), w = l.w;
+  if (scroll && (cx < G.sx + 40 || cx > G.sx + G.V - 40)) {
+    stage.scrollTo({ left: clamp(cx - G.V / 2, 0, Math.max(0, G.W - G.V)), behavior: reduce ? 'auto' : 'smooth' });
+  }
+  // the thread and tag live in screen space; they hide while their hour is scrolled out of view
+  const x = cx - G.sx, off = x < -1 || x > G.V + 1;
   const thread = $('thread'), tag = $('tag'), col = $('col');
-  thread.hidden = tag.hidden = col.hidden = false;
+  thread.hidden = tag.hidden = col.hidden = off;
+  if (off) { $('staff').hidden = true; return; }
   thread.style.left = `${x}px`; thread.style.height = `${G.Hs}px`;
   Object.assign(col.style, { left: `${x}px`, top: `${G.Hs + 4}px`, width: `${Math.max(2, G.colW)}px`, height: `${G.R - 4}px` });
   const p = Object.fromEntries(fmtParts.formatToParts(t).map((o) => [o.type, o.value]));
@@ -1032,13 +1070,9 @@ function setCursor(i, scroll) {
   const wave = DATA.wave[j];
   $('t-sea').textContent = [Number.isFinite(wave) ? `waves ${wave.toFixed(1)} m` : '', tideNote(i)].filter(Boolean).join(', ') || 'no sea data';
   placeStaff(x, j);
-  const tw = tag.offsetWidth || 236, left = clamp(x - tw / 2, 6, G.W - tw - 6);
+  const tw = tag.offsetWidth || 236, left = clamp(x - tw / 2, 6, G.V - tw - 6);
   tag.style.left = `${left}px`;
   tag.style.transform = `rotate(${clamp((x - (left + tw / 2)) / tw * 10, -5, 5) - .6}deg)`;
-  if (scroll && stage.scrollWidth > stage.clientWidth) {
-    const sl = stage.scrollLeft, cw = stage.clientWidth;
-    if (x < sl + 40 || x > sl + cw - 40) stage.scrollTo({ left: x - cw / 2, behavior: reduce ? 'auto' : 'smooth' });
-  }
 }
 
 /* ---------- words for screen readers ---------- */
@@ -1058,26 +1092,35 @@ function summarise(hm, segs) {
 }
 
 /* ---------- render ---------- */
-function render() {
+function render(keepTime) {
   if (!DATA) return;
-  layout(); buildLook(); buildSlots();
-  G.lamps = [];
-  const c = sc;
-  c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, G.W, G.H);
-  paintSky(c); paintTwilight(c); paintStars(c); paintSunMoon(c); paintHighCloud(c); paintMidCloud(c); paintFarSea(c);
-  for (const [key, lift, scale, seed] of LAYERS) { paintLand(c, key, lift, scale, seed); if (key === 'far') paintHillFog(c); }
-  paintShore(c); paintLandmarks(c); paintLowCloud(c); paintSea(c); paintVeil(c);
-  paintGrain(c, 0, G.Hs);
-  const hm = hourMarks(), segs = daySegments(hm);
-  paintRuler(c, hm, segs);
+  // keep the same moment at the left edge across a resize or a new hour
+  const tLeft = keepTime ?? (G.pxh ? tOf(stage.scrollLeft) : null);
+  layout(); buildLook(); buildSlots(); buildScenery();
+  G.hm = hourMarks(); G.segs = daySegments(G.hm);
   buildFx(); buildStaff();
+  stage.scrollLeft = tLeft == null ? 0 : clamp(xOf(tLeft), 0, Math.max(0, G.W - G.V));
+  paintScene();
   cancelAnimationFrame(raf);
   if (reduce) paintFx(0); else raf = requestAnimationFrame(loop);
   setCursor(state.cursor);
-  summarise(hm, segs);
+  summarise(G.hm, G.segs);
+}
+function paintScene() {
+  const c = sc;
+  G.sx = stage.scrollLeft; G.x0 = G.sx - 12; G.x1 = G.sx + G.V + 12;
+  G.lamps = [];
+  c.setTransform(DPR, 0, 0, DPR, 0, 0); c.clearRect(0, 0, G.V, G.H);
+  const timeline = (fn) => { c.save(); c.translate(-G.sx, 0); fn(); c.restore(); };
+  timeline(() => { paintSky(c); paintTwilight(c); paintStars(c); paintSunMoon(c); paintHighCloud(c); paintMidCloud(c); paintFarSea(c); });
+  for (const [key] of LAYERS) { paintLand(c, key); if (key === 'far') timeline(() => paintHillFog(c)); }
+  paintShore(c); paintLandmarks(c);
+  timeline(() => { paintLowCloud(c); paintSea(c); paintVeil(c); paintRuler(c, G.hm, G.segs); });
+  $('later').hidden = G.sx >= G.W - G.V - 2;
+  $('earlier').hidden = G.sx <= 2;
 }
 let pending = 0;
-const scheduleRender = () => { cancelAnimationFrame(pending); pending = requestAnimationFrame(render); };
+const scheduleRender = () => { cancelAnimationFrame(pending); pending = requestAnimationFrame(() => render()); };
 
 /* ---------- loading ---------- */
 function setStatus(text) { $('status').textContent = text; }
@@ -1105,24 +1148,47 @@ async function load() {
 
 /* ---------- wiring ---------- */
 document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
-  const h = +b.dataset.hours, t = G.t0 + state.cursor * HOUR;
+  if (!DATA) return;
+  const h = +b.dataset.hours, tc = G.t0 + state.cursor * HOUR, at = xOf(tc) - G.sx;
   state.hours = h;
   try { localStorage.setItem(VIEW_KEY, String(h)); } catch { /* storage may be blocked */ }
   document.querySelectorAll('.seg button').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
-  state.cursor = Math.round((t - floorHour(Date.now())) / HOUR);
-  render(); setCursor(state.cursor, true);
+  // zoom about the cursor: its hour stays where it was on screen
+  const keep = at >= 0 && at <= G.V ? at : G.V * .3;
+  G.pxh = Math.max(G.V / (h >= 168 ? G.hours : Math.min(h, G.hours)), 7);
+  render(tOf(xOf(tc) - keep));
 }));
 document.querySelectorAll('.seg button').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.hours === state.hours)));
-$('now').addEventListener('click', () => { setCursor(0, true); stage.scrollTo({ left: 0, behavior: reduce ? 'auto' : 'smooth' }); });
-const pick = (e) => { if (!DATA) return; const r = fxCv.getBoundingClientRect(); setCursor((tOf(e.clientX - r.left) - G.t0) / HOUR); };
+$('now').addEventListener('click', () => { stage.scrollTo({ left: 0, behavior: reduce ? 'auto' : 'smooth' }); state.cursor = 0; setCursor(0); });
+let pointerX = null, scrolling = 0;
+const pick = (e) => { if (!DATA) return; pointerX = e.clientX - fxCv.getBoundingClientRect().left; setCursor((tOf(pointerX + G.sx) - G.t0) / HOUR); };
 fxCv.addEventListener('pointermove', pick);
 fxCv.addEventListener('pointerdown', pick);
+fxCv.addEventListener('pointerleave', () => { pointerX = null; });
+stage.addEventListener('scroll', () => {
+  if (scrolling || !DATA) return;
+  scrolling = requestAnimationFrame(() => {
+    scrolling = 0;
+    paintScene();
+    // under a still pointer the hour changes as the timeline slides past
+    setCursor(pointerX === null ? state.cursor : (tOf(pointerX + G.sx) - G.t0) / HOUR);
+  });
+}, { passive: true });
+stage.addEventListener('wheel', (e) => {
+  // a plain mouse wheel scrolls through time
+  if (G.W <= G.V || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+  e.preventDefault(); stage.scrollLeft += e.deltaY;
+}, { passive: false });
+const page = (dir) => stage.scrollBy({ left: dir * G.V * .85, behavior: reduce ? 'auto' : 'smooth' });
+$('later').addEventListener('click', () => page(1));
+$('earlier').addEventListener('click', () => page(-1));
 stage.addEventListener('keydown', (e) => {
+  if (e.key === 'PageDown' || e.key === 'PageUp') { e.preventDefault(); page(e.key === 'PageDown' ? 1 : -1); return; }
   const step = e.shiftKey ? 6 : 1;
   const moves = { ArrowRight: state.cursor + step, ArrowLeft: state.cursor - step, Home: 0, End: G.hours };
-  if (e.key in moves) { e.preventDefault(); setCursor(moves[e.key], true); }
+  if (e.key in moves) { e.preventDefault(); pointerX = null; setCursor(moves[e.key], true); }
 });
-new ResizeObserver(scheduleRender).observe(stage);
+new ResizeObserver(() => scheduleRender()).observe(stage);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheduleRender);
 document.fonts?.ready.then(scheduleRender);
 setInterval(() => {
