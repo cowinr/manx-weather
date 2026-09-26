@@ -12,8 +12,9 @@
  *
  * Needs window.MANX_PROFILE from profile.js and window.HourPanel from panel.js.
  * URL options: ?demo for a synthetic week that exercises every kind of weather,
- * ?hours=168, 48, 24 or 12 to open at that zoom (hours per screen), and ?debug
- * to expose the astronomy helpers as window.EV.
+ * ?hours=168, 48, 24 or 12 to open at that zoom (hours per screen), ?stretch=N
+ * to draw the hills N times their real height (6 by default), and ?debug to
+ * expose the astronomy helpers as window.EV.
  */
 (() => {
 'use strict';
@@ -140,6 +141,8 @@ const fmtParts = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, weekday: 'long
 /* ---------- state ---------- */
 let DATA = null;
 const PROFILE = window.MANX_PROFILE || fallbackProfile();
+// how many times taller than life the hills stand; ?stretch= overrides it
+const STRETCH = clamp(+params.get('stretch') || 6, 1, 20);
 const G = {}, LT = { t0: 0, a: [] }, SLOTS = {};
 const VIEWS = [168, 48, 24, 12], VIEW_KEY = 'ellan-vannin-view';
 function savedView() { try { return +localStorage.getItem(VIEW_KEY); } catch { return 0; } }
@@ -148,8 +151,8 @@ const state = { hours: [+params.get('hours'), savedView(), 48].find((h) => VIEWS
 
 function fallbackProfile() {
   const n = 127, bump = (i, c, w, h) => h * Math.exp(-Math.pow((i - c) / w, 2));
-  const far = Array.from({ length: n }, (_, i) => i < 3 || i > 124 ? 0 : Math.round(40 + bump(i, 36, 9, 420) + bump(i, 74, 10, 580) + bump(i, 88, 7, 520) + bump(i, 55, 12, 380)));
-  return { latSouth: 54.04, latNorth: 54.42, far, mid: far.map((v) => Math.round(v * .8)), near: far.map((v) => Math.round(v * .45)) };
+  const far = Array.from({ length: n }, (_, i) => i < 12 || i > 120 ? 0 : Math.round(10 + bump(i, 45, 9, 110) + bump(i, 90, 10, 210) + bump(i, 105, 7, 170) + bump(i, 70, 12, 140)));
+  return { eye: { lat: 54.15, lon: -4.31, height: 6 }, azLeft: 239, azRight: 364, far, mid: far.map((v) => Math.round(v * .8)), near: far.map((v) => Math.round(v * .45)) };
 }
 
 /* ---------- data ---------- */
@@ -327,7 +330,8 @@ function skyX(x) {
   const a = LT.a[i].sky, b = LT.a[j].sky;
   return { top: mix(a.top, b.top, k), mid: mix(a.mid, b.mid, k), hor: mix(a.hor, b.hor, k) };
 }
-const yAlt = (m) => G.yS - m * G.k;
+// cloud bases are measured against the mountains, which stand about 14 km from the boat
+const yAlt = (m) => G.yS - angleUp(m, 14000) * G.k;
 function lowBaseY(w) {
   const m = clamp(w.lcl, 120, 2200);
   return yAlt(m <= 600 ? m : 600 + (m - 600) * .33);
@@ -408,7 +412,7 @@ function layout() {
   G.W = Math.ceil(G.hours * G.pxh); G.span = G.hours * HOUR;
   G.H = H; G.R = clamp(Math.round(H * .17), 104, 124); G.Hs = H - G.R;
   G.sc = clamp(G.Hs / 650, .72, 1.3);
-  G.yS = Math.round(G.Hs * .75); G.k = G.Hs * .3 / 621;
+  G.yS = Math.round(G.Hs * .75); G.k = G.V / (PROFILE.azRight - PROFILE.azLeft) * STRETCH;
   G.tPx = G.Hs * .016; G.yM = G.yS + 3.7 * G.tPx;
   G.colW = G.pxh;
   inner.style.width = G.W + 'px'; view.style.width = G.V + 'px';
@@ -438,13 +442,51 @@ function buildScenery() {
   const R = mulberry(7), n = Math.round(G.W * G.yS / 700);
   G.stars = Array.from({ length: n }, () => ({ x: R() * G.W, y: Math.pow(R(), 1.25) * G.yS * .9, r: .45 + Math.pow(R(), 4) * 1.6, tw: R() })).sort((a, b) => a.x - b.x);
   G.ridges = Object.fromEntries(LAYERS.map(([key, lift, scale, seed]) => [key, ridgePoints(key, lift, scale, seed)]));
-  const H = mulberry(51), s = G.sc, end = xLat(54.172);
-  G.houses = [];
-  for (let x = xLat(54.1465); x < end;) {
-    const w = (5 + H() * 3.5) * s, h = (7 + H() * 7) * s;
-    G.houses.push({ x, w, h, lit: Array.from({ length: 6 }, () => H() < .7) });
-    x += w + .4;
+  // Douglas promenade, from the Sea Terminal to Derby Castle: a terrace of white-fronted hotels
+  const shore = G.yS + 2;
+  G.houses = houses(mulberry(51), [[xAt(54.148, -4.476), shore], [xAt(54.166, -4.456), shore]], [7, 14], [5, 8.5]);
+  G.towns = buildTowns(shore);
+}
+// houses standing along a line of [x, base] points, left to right; sizes are unscaled pixels, gap spaces a village
+// out, and u scales the widths
+function houses(R, pts, [hMin, hMax], [wMin, wMax] = [4, 6.5], gap = 0, u = G.sc) {
+  const s = G.sc, out = [];
+  for (let x = pts[0][0], i = 0; x < pts[pts.length - 1][0];) {
+    while (x > pts[i + 1][0]) i++;
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], w = (wMin + R() * (wMax - wMin)) * u;
+    out.push({ x, w, h: (hMin + R() * (hMax - hMin)) * s, base: lerp(y0, y1, clamp((x + w / 2 - x0) / (x1 - x0 || 1), 0, 1)), lit: Array.from({ length: 6 }, () => R() < .7) });
+    x += w + .4 + R() * gap * u;
   }
+  return out;
+}
+/* Port St Mary, Laxey and Ramsey stand at their true bearings from the boat but, like the lighthouses, at a size
+   that reads rather than the few pixels they would really cover. Rows further back stand higher, so each town
+   climbs its hillside; back rows come first so the front rows overlap them. */
+function buildTowns(shore) {
+  // widths follow the screen's width, as the bearings do, so the towns keep their places on a phone
+  const s = G.sc, u = s * clamp(G.V / 1000, .55, 1), R = mulberry(71);
+  // Port St Mary: harbour-front cottages, the town stepping up the hill behind, the Alfred Pier to the south
+  const p = xAt(54.0713, -4.7345), pw = 20 * u;
+  const psm = { x: p, pier: [p - pw - 16 * u, p - pw * .7], houses: [
+    ...houses(R, [[p - pw * .45, shore - 9 * s], [p + pw * .6, shore - 10 * s]], [5, 8], [4, 6.5], 0, u),
+    ...houses(R, [[p - pw * .8, shore - 4.5 * s], [p + pw * .85, shore - 5 * s]], [5, 8], [4, 6.5], 0, u),
+    ...houses(R, [[p - pw * .7, shore], [p + pw, shore]], [5, 9], [4, 7], 0, u)] };
+  // Laxey: the wheel up the glen, the village below it, houses up both valley sides and Old Laxey round the harbour
+  const h = xAt(54.2275, -4.3905), wheel = sight(54.2386, -4.4074), wx = wheel.x;
+  const wy = G.yS - Math.max(angleUp(69, wheel.d) * G.k, 13 * s);
+  const laxey = { x: h, wheel: [wx, wy], jetty: [h + 2 * u, h + 12 * u], houses: [
+    ...houses(R, [[wx - 26 * u, wy - 2 * s], [wx - 14 * u, wy + 3 * s]], [4.5, 6.5], [3.5, 5], 2, u),
+    ...houses(R, [[h + 9 * u, shore - 2 * s], [h + 22 * u, shore - 10 * s]], [4.5, 7], [3.5, 5.5], 2.5, u),
+    ...houses(R, [[wx - 6 * u, shore - 4 * s], [h - 3 * u, shore - 3 * s]], [3.5, 5], [3.5, 5], 1, u),
+    ...houses(R, [[h - 5 * u, shore], [h + 9 * u, shore]], [5, 8], [4, 6], 0, u)] };
+  // Ramsey: tall terraces along a flat front, the Albert Tower on Lhergy Frissell above the town (Wikipedia: 14 m of
+  // granite, its foot about 130 m up), and the Queen's Pier out into the bay, stopping short of the Point of Ayre light
+  const r = xAt(54.3225, -4.383), rw = 24 * u, tower = sight(54.312937, -4.379684), root = r + rw * .65;
+  const ramsey = { x: r, tower: [tower.x, G.yS - Math.max(angleUp(130, tower.d) * G.k, 24 * s)],
+    pier: [root, Math.min(Math.max(xAt(54.3172, -4.369), root + 32 * u), xAt(54.41575, -4.36811) - 7 * u)], houses: [
+    ...houses(R, [[r - rw * .85, shore - 6 * s], [r + rw * .5, shore - 6 * s]], [8, 13], [4.5, 7], 0, u),
+    ...houses(R, [[r - rw, shore], [r + rw * .65, shore]], [8, 14], [5, 8], 0, u)] };
+  return { psm, laxey, ramsey };
 }
 
 /* ---------- the scene ---------- */
@@ -581,7 +623,7 @@ function ridgePoints(key, lift, scale, seed) {
   const h = PROFILE[key], N = h.length, R = mulberry(seed), pts = [];
   let px = null, py = null;
   for (let i = 0; i < N; i++) {
-    const x = i / (N - 1) * G.V, y = h[i] > 0 ? G.yS - lift * G.sc - h[i] * G.k * scale : G.yS + 4;
+    const x = i / (N - 1) * G.V, y = h[i] > 0 ? G.yS - lift * G.sc - h[i] / 100 * G.k * scale : G.yS + 4;
     if (px !== null) {
       const steps = Math.max(1, Math.round((x - px) / 4));
       for (let s = 1; s < steps; s++) { const u = s / steps; pts.push([lerp(px, x, u), lerp(py, y, u) + (R() - .5) * .8]); }
@@ -592,7 +634,7 @@ function ridgePoints(key, lift, scale, seed) {
 }
 function heightAt(key, x, lift, scale) {
   const h = PROFILE[key], f = clamp(x / G.V * (h.length - 1), 0, h.length - 1), i = Math.floor(f), j = Math.min(h.length - 1, i + 1);
-  return G.yS - lift * G.sc - lerp(h[i], h[j], f - i) * G.k * scale;
+  return G.yS - lift * G.sc - lerp(h[i], h[j], f - i) / 100 * G.k * scale;
 }
 const LAYERS = [['far', 9, 1, 31], ['mid', 4, 1, 32], ['near', -2, .94, 33]];
 function paintLand(c, key) {
@@ -622,7 +664,17 @@ function paintLowCloud(c) {
     drawCloud(c, s, s.x, lowBaseY(l.w) + s.dy * 10 * G.sc, .68 + lc * .45, 1 + convective(l.w.code) * .9, l.cLow);
   }
 }
-const xLat = (lat) => (lat - PROFILE.latSouth) / (PROFILE.latNorth - PROFILE.latSouth) * G.V;
+/* The island is drawn from one real place: a boat 10 km east of Douglas (PROFILE.eye). A landmark's x is its compass
+   bearing from the boat, and angleUp gives how far above level something m metres high stands at distance d,
+   less the curve of the earth. */
+function sight(lat, lon) {
+  const e = PROFILE.eye, north = (lat - e.lat) * 111320, east = (lon - e.lon) * 111320 * Math.cos(e.lat * RAD);
+  let az = Math.atan2(east, north) / RAD;
+  while (az < PROFILE.azLeft) az += 360;
+  return { x: (az - PROFILE.azLeft) / (PROFILE.azRight - PROFILE.azLeft) * G.V, d: Math.hypot(north, east) };
+}
+const xAt = (lat, lon) => sight(lat, lon).x;
+const angleUp = (m, d) => Math.atan2(m - PROFILE.eye.height - d * d / 12742000 * .87, d) / RAD;
 function paintShore(c) {
   const far = PROFILE.far, N = far.length, R = mulberry(41), runs = [];
   let start = -1;
@@ -644,57 +696,132 @@ function paintShore(c) {
   noShadow(c);
 }
 function paintLandmarks(c) {
-  const s = G.sc;
-  // Douglas promenade: a terrace of white-fronted hotels
+  const s = G.sc, { psm, laxey, ramsey } = G.towns, shore = G.yS + 2;
   shadow(c, 3, 1, .3);
-  for (const { x, w, h, lit } of G.houses) {
-    const l = lookS(x + w / 2), base = G.yS + 2;
-    c.fillStyle = rgba(l.house); c.fillRect(x, base - h, w, h);
-    c.fillStyle = rgba(l.roof); c.beginPath(); c.moveTo(x - .6, base - h); c.lineTo(x + w / 2, base - h - w * .45); c.lineTo(x + w + .6, base - h); c.closePath(); c.fill();
-    if (l.L < .4) {
-      c.fillStyle = `rgba(255,208,120,${(.95 - l.L).toFixed(2)})`;
-      let k = 0;
-      for (let wy = base - h + 2.5 * s; wy < base - 2 * s; wy += 3.4 * s, k++) if (lit[k % 6]) c.fillRect(x + w * .3, wy, Math.max(1, w * .35), 1.4 * s);
-    }
-  }
-  // the Laxey Wheel on its white tower
-  const lx = xLat(54.2325), ly = heightAt('near', lx, -2, .94) + 5 * s, lw = lookS(lx), wr = 6.5 * s;
-  c.fillStyle = rgba(lw.stone); c.fillRect(lx - 2.4 * s, ly - wr, 4.8 * s, wr + 6 * s);
-  c.strokeStyle = rgba(lw.wheel); c.lineWidth = 1.6 * s;
-  c.beginPath(); c.arc(lx, ly - wr, wr, 0, TAU); c.stroke();
-  c.lineWidth = .7 * s;
-  for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI; c.beginPath(); c.moveTo(lx - Math.cos(a) * wr, ly - wr - Math.sin(a) * wr); c.lineTo(lx + Math.cos(a) * wr, ly - wr + Math.sin(a) * wr); c.stroke(); }
+  G.houses.forEach((h) => drawHouse(c, h));
+  // Port St Mary and its breakwater, with the small light at the end
+  jetty(c, psm.pier[0], psm.pier[1], shore);
+  const pl = lookS(psm.pier[0]);
+  c.fillStyle = rgba(pl.house); c.fillRect(psm.pier[0], shore - 5 * s, 1.8 * s, 5 * s);
+  c.fillStyle = rgba(pl.roof); c.fillRect(psm.pier[0] - .3 * s, shore - 6.2 * s, 2.4 * s, 1.4 * s);
+  psm.houses.forEach((h) => drawHouse(c, h));
+  // Laxey, with the wheel up the glen behind the village
+  paintLaxeyWheel(c, ...laxey.wheel);
+  jetty(c, ...laxey.jetty, shore);
+  laxey.houses.forEach((h) => drawHouse(c, h));
+  // Ramsey: Lhergy Frissell behind the town with the Albert Tower on top, the terraces, then the Queen's Pier on its legs
+  const [ax, ay] = ramsey.tower, al = lookS(ax), tw = 4.2 * s, th = 11 * s;
+  c.fillStyle = rgba(al.near);
+  c.beginPath(); c.moveTo(ax - 20 * s, shore - 5 * s); c.quadraticCurveTo(ax - 8 * s, ay - 1.5 * s, ax, ay); c.quadraticCurveTo(ax + 9 * s, ay + 1 * s, ax + 18 * s, shore - 5 * s); c.closePath(); c.fill();
+  c.fillStyle = rgba(mix(C.graniteNight, C.graniteDay, al.L));
+  c.fillRect(ax - tw / 2, ay - th, tw, th + s);
+  for (let i = 0; i < 3; i++) c.fillRect(ax - tw / 2 + i * tw * .4, ay - th - 1.3 * s, tw * .22, 1.4 * s);
+  ramsey.houses.forEach((h) => drawHouse(c, h));
+  const [p0, p1] = ramsey.pier, ql = lookS((p0 + p1) / 2), deck = G.yS + 3 * s;
+  c.strokeStyle = rgba(ql.roof); c.lineWidth = .6 * s;
+  c.beginPath();
+  for (let x = p0; x <= p1; x += 3 * s) { c.moveTo(x, deck); c.lineTo(x, G.yM + 3 * G.tPx); }
+  c.stroke();
+  c.fillStyle = rgba(ql.roof); c.fillRect(p0, deck - 1.2 * s, p1 - p0, 1.4 * s);
+  drawHouse(c, { x: p1 - 5 * s, w: 5.5 * s, h: 3.6 * s, base: deck - 1.2 * s, lit: [1, 0, 0, 0, 0, 0] });
   noShadow(c);
   paintLighthouses(c, false);
+}
+function drawHouse(c, { x, w, h, base, lit }) {
+  const s = G.sc, l = lookS(x + w / 2);
+  c.fillStyle = rgba(l.house); c.fillRect(x, base - h, w, h);
+  c.fillStyle = rgba(l.roof); c.beginPath(); c.moveTo(x - .6, base - h); c.lineTo(x + w / 2, base - h - w * .45); c.lineTo(x + w + .6, base - h); c.closePath(); c.fill();
+  if (l.L < .4) {
+    c.fillStyle = `rgba(255,208,120,${(.95 - l.L).toFixed(2)})`;
+    let k = 0;
+    for (let wy = base - h + 2.5 * s; wy < base - 2 * s; wy += 3.4 * s, k++) if (lit[k % 6]) c.fillRect(x + w * .3, wy, Math.max(1, w * .35), 1.4 * s);
+  }
+}
+// a stone harbour wall running along the shore line
+function jetty(c, x0, x1, shore) {
+  c.fillStyle = rgba(mix(lookS(x0).stone, lookS(x0).rock, .55));
+  c.fillRect(x0, shore - 1.5 * G.sc, x1 - x0, 3.5 * G.sc);
+}
+/* The Great Laxey Wheel, Lady Isabella: the red wheel in its white wheel case, the spiral stair (95 steps) up to the
+   platform over the top of the wheel, the rod running from the crank along its arched viaduct, all at a size
+   that reads. cx is the wheel's bearing and ground the foot of the wheel case. */
+function paintLaxeyWheel(c, cx, ground) {
+  const s = G.sc, l = lookS(cx), r = 8 * s, cy = ground - r * .95, stone = rgba(l.stone);
+  // the rod viaduct, off to the right on its arches
+  const vx0 = cx + r * .9, pitch = 2.6 * s, pier = .9 * s, n = 5, vx1 = vx0 + n * pitch + pier, vTop = ground - r * .5, spring = vTop + (ground - vTop) * .4;
+  c.fillStyle = rgba(mix(l.stone, l.rock, .15));
+  c.beginPath(); c.moveTo(vx0, ground); c.lineTo(vx0, vTop); c.lineTo(vx1, vTop); c.lineTo(vx1, ground);
+  for (let k = n - 1; k >= 0; k--) {
+    const a = vx0 + k * pitch + pier, b = vx0 + (k + 1) * pitch;
+    c.lineTo(b, ground); c.lineTo(b, spring); c.arc((a + b) / 2, spring, (b - a) / 2, 0, Math.PI, true); c.lineTo(a, ground);
+  }
+  c.closePath(); c.fill();
+  // the wheel: rim, inner ring, spokes and hub, and the rod from the crank to the viaduct
+  c.strokeStyle = rgba(l.wheel);
+  c.lineWidth = .4 * s; c.beginPath();
+  for (let i = 0; i < 24; i++) { const a = i / 24 * TAU; c.moveTo(cx, cy); c.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+  c.stroke();
+  c.lineWidth = 1.5 * s; c.beginPath(); c.arc(cx, cy, r, 0, TAU); c.stroke();
+  c.lineWidth = .6 * s; c.beginPath(); c.arc(cx, cy, r * .84, 0, TAU); c.stroke();
+  c.fillStyle = rgba(l.wheel); c.beginPath(); c.arc(cx, cy, r * .15, 0, TAU); c.fill();
+  c.strokeStyle = rgba(l.roof); c.lineWidth = .7 * s;
+  c.beginPath(); c.moveTo(cx + r * .3, cy); c.lineTo(vx0 + 1.5 * s, vTop + .5 * s); c.stroke();
+  // the wheel case in front of the foot of the wheel, with the arch of the tail race
+  c.fillStyle = stone;
+  c.fillRect(cx - r * 1.15, ground - r * .42, r * 2.3, r * .42);
+  c.fillStyle = rgba(l.roof);
+  c.beginPath(); c.moveTo(cx - r * .22, ground); c.lineTo(cx - r * .22, ground - r * .16); c.arc(cx, ground - r * .16, r * .22, Math.PI, TAU); c.lineTo(cx + r * .22, ground); c.closePath(); c.fill();
+  // the spiral stair tower on the left, and the railed platform across the top of the wheel
+  const tx0 = cx - r * 1.55, tx1 = cx - r * 1.08, top = cy - r - 1.3 * s;
+  c.fillStyle = stone; c.fillRect(tx0, top, tx1 - tx0, ground - top);
+  c.strokeStyle = rgba(l.roof); c.lineWidth = .35 * s; c.beginPath();
+  for (let y = top + 2 * s; y < ground - r * .45; y += 2.2 * s) { c.moveTo(tx0, y + 1.4 * s); c.lineTo(tx1, y); }
+  c.stroke();
+  c.fillStyle = stone; c.fillRect(tx0, top - .2 * s, cx + r * .35 - tx0, 1.2 * s);
+  c.strokeStyle = rgba(l.roof); c.lineWidth = .4 * s; c.beginPath();
+  c.moveTo(tx0, top - 1.8 * s); c.lineTo(cx + r * .35, top - 1.8 * s);
+  for (let x = tx0; x <= cx + r * .35; x += 1.8 * s) { c.moveTo(x, top - 1.8 * s); c.lineTo(x, top); }
+  c.stroke();
 }
 /* The island's Northern Lighthouse Board lights. Positions, tower heights, daymarks and characters are from
    the NLB and Wikipedia/Wikidata lists (checked 24 September 2026). base is the tower's foot above the sea in
    metres; group and period are the character, so Fl(3) W 30s is group 3, period 30. The Calf of Man's lights
    are disused and left out. */
 const LIGHTS = [
-  { name: 'Chicken Rock', lat: 54.03785, tower: 44, base: 0, sea: true, look: 'granite', group: 1, period: 5 },
-  { name: 'Langness', lat: 54.05488, tower: 19, base: 4, look: 'white', group: 2, period: 30, cottage: true },
-  { name: 'Thousla Rock', lat: 54.06216, tower: 8, base: 0, sea: true, look: 'beacon', group: 1, period: 3, red: true },
-  { name: 'Douglas Head', lat: 54.14343, tower: 20, base: 12, look: 'white', group: 1, period: 10 },
-  { name: 'Maughold Head', lat: 54.29575, tower: 23, base: 42, look: 'ochre', group: 3, period: 30, cottage: true },
-  { name: 'Point of Ayre', lat: 54.41575, tower: 30, base: 2, look: 'bands', group: 4, period: 20 }
+  { name: 'Chicken Rock', lat: 54.03785, lon: -4.83858, tower: 44, base: 0, sea: true, look: 'granite', group: 1, period: 5 },
+  { name: 'Langness', lat: 54.05488, lon: -4.62508, tower: 19, base: 4, look: 'white', group: 2, period: 30, cottage: true },
+  { name: 'Thousla Rock', lat: 54.06216, lon: -4.80071, tower: 8, base: 0, sea: true, look: 'beacon', group: 1, period: 3, red: true },
+  { name: 'Douglas Head', lat: 54.14343, lon: -4.46581, tower: 20, base: 12, look: 'white', group: 1, period: 10 },
+  { name: 'Maughold Head', lat: 54.29575, lon: -4.30942, tower: 23, base: 42, look: 'ochre', group: 3, period: 30, cottage: true, cliff: true },
+  { name: 'Point of Ayre', lat: 54.41575, lon: -4.36811, tower: 30, base: 2, look: 'bands', group: 4, period: 20 }
 ];
 function paintLighthouses(c, atSea) {
   const s = G.sc;
   for (const lh of LIGHTS) {
     if (!!lh.sea !== atSea) continue;
-    const x = clamp(xLat(lh.lat), 12 * s, G.V - 12 * s), l = lookS(x);
+    const { x: sx, d } = sight(lh.lat, lh.lon), x = clamp(sx, 12 * s, G.V - 12 * s), l = lookS(x);
     const h = (9 + lh.tower * .33) * s, wb = Math.max(4, h * .27), wt = lh.look === 'beacon' ? wb * .9 : wb * .72;
-    const base = atSea ? G.yM - 1.5 * s : G.yS - lh.base * G.k, low = G.yM + 3.2 * G.tPx;
+    // a cliff-top light stands on a cliff drawn to the same scale as its tower
+    const cliff = lh.cliff ? lh.base * .33 * s : 0;
+    const base = atSea ? G.yM - 1.5 * s : G.yS - Math.max(angleUp(lh.base, d) * G.k, cliff), low = G.yM + 3.2 * G.tPx;
     shadow(c, 4, 1.5, .3);
     // footing: a sea rock uncovered at low water, or the headland the tower stands on
     c.fillStyle = rgba(atSea ? l.rock : l.near);
     c.beginPath();
     if (atSea) { c.moveTo(x - wb * 2.1, low); c.lineTo(x - wb * 1.3, base + s); c.lineTo(x + wb * .2, base - s); c.lineTo(x + wb * 1.3, base); c.lineTo(x + wb * 2.2, low); }
+    else if (lh.cliff) { c.moveTo(x - wb * 7, G.yS + 6); c.lineTo(x - wb * 3.5, base - 1.5 * s); c.lineTo(x + wb * 1.4, base); c.lineTo(x + wb * 1.7, G.yS + 6); }
     else { c.moveTo(x - wb * 3.2, G.yS + 6); c.lineTo(x - wb * 1.5, base); c.lineTo(x + wb * 1.8, base); c.lineTo(x + wb * 3.4, G.yS + 6); }
     c.closePath(); c.fill();
+    if (lh.cliff) {
+      // grass on the headland, and under the tower a bare rock face down to the shore, bedded in layers
+      c.fillStyle = rgba(l.rock);
+      c.beginPath(); c.moveTo(x - wb * 1.2, base + 1.4 * s); c.lineTo(x + wb * 1.4, base + .6 * s); c.lineTo(x + wb * 1.7, G.yS + 6); c.lineTo(x - wb * 2.4, G.yS + 6); c.closePath(); c.fill();
+      c.strokeStyle = rgba(mix(l.rock, C.black, .35)); c.lineWidth = .5 * s; c.beginPath();
+      for (let y = base + 3.5 * s; y < G.yS + 4; y += 3 * s) { c.moveTo(x - wb * 1.2 - (y - base) * .12, y); c.lineTo(x + wb * 1.45, y - .4 * s); }
+      c.stroke();
+    }
     if (lh.cottage) {
-      const cx = x + wb * .9, cw = wb * 2, ch = h * .26;
+      const cw = wb * 2, cx = lh.cliff ? x - wb * .9 - cw : x + wb * .9, ch = h * .26;
       c.fillStyle = rgba(l.house); c.fillRect(cx, base - ch, cw, ch);
       c.fillStyle = rgba(l.roof); c.beginPath(); c.moveTo(cx - .5, base - ch); c.lineTo(cx + cw / 2, base - ch - cw * .3); c.lineTo(cx + cw + .5, base - ch); c.closePath(); c.fill();
     }
@@ -715,7 +842,7 @@ function paintLighthouses(c, atSea) {
 }
 function paintTower(c) {
   // Tower of Refuge on Conister Rock, Douglas Bay
-  const s = G.sc, x = xLat(54.1505) + 6 * s, l = lookS(x), base = G.yM + .6 * G.tPx;
+  const s = G.sc, x = xAt(54.1504, -4.4687), l = lookS(x), base = G.yM + .6 * G.tPx;
   shadow(c, 4, 1.5, .3);
   c.fillStyle = rgba(l.rock); c.beginPath(); c.moveTo(x - 13 * s, base + 4 * s); c.lineTo(x - 8 * s, base - 2 * s); c.lineTo(x + 7 * s, base - 3 * s); c.lineTo(x + 14 * s, base + 4 * s); c.closePath(); c.fill();
   c.fillStyle = rgba(l.stone);
