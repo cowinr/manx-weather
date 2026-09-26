@@ -15,6 +15,7 @@ It is not Hansard work, so Hansard branding does not apply. The page keeps its o
 | `panel.js` | The hour panel (`window.HourPanel`): the instruments, the harbour picture, the phone strip and the harbour seal, drawn as SVG. It knows nothing about the forecast beyond the fields `hourDetail` passes it |
 | `profile.js` | The generated skyline (`window.MANX_PROFILE`): three silhouettes of 720 bearings, in hundredths of a degree above level as seen from a boat 10 km east of Douglas. Never hand-edit it; rebuild with `python3 tools/build_profile.py` |
 | `tools/build_profile.py` | Stdlib only; downloads one 2.7 MB SRTM tile |
+| `favicon.svg`, `favicon-32.png`, `apple-touch-icon.png` | The header's stamp as icons, with bolder legs so it reads at 16 px. The PNGs are rendered from the SVG with `rsvg-convert` (the touch icon on the paper colour, since iOS fills transparency with black) |
 
 There is no build step, no dependency and no test suite.
 

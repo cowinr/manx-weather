@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Favicon: the header's stamp, the Three Legs of Man on a red disc, with bolder legs so it reads at 16 px. -->
+  <defs>
+    <g id="leg">
+      <path d="M50 50 L47 22 L66 11" fill="none" stroke="#f3e6c8" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M61 6 L75 5 L73 16 Z" fill="#e2b04a"/>
+    </g>
+  </defs>
+  <circle cx="50" cy="50" r="49" fill="#c8102e"/>
+  <use href="#leg"/>
+  <use href="#leg" transform="rotate(120 50 50)"/>
+  <use href="#leg" transform="rotate(240 50 50)"/>
+  <circle cx="50" cy="50" r="7" fill="#e2b04a"/>
+</svg>
